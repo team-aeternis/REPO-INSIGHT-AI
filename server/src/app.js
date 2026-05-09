@@ -1,7 +1,7 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 
-import { globalErrorHandler } from './middleware/globalErrorHandler.middleware.js';
+import { globalErrorHandler } from './middleware/errorHandler.js';
 
 const app = express();
 
