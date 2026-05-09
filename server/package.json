@@ -11,10 +11,13 @@
     "dev": "nodemon src/server.js"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "cookie-parser": "^1.4.7",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "jest": "^30.4.2",
-    "nodemon": "^3.1.14"
+    "mongoose": "^9.6.2",
+    "nodemon": "^3.1.14",
+    "openai": "^6.37.0"
   }
 }
