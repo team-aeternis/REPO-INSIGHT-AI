@@ -13,11 +13,16 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "cookie-parser": "^1.4.7",
+    "crypto": "^1.0.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "fs": "^0.0.1-security",
+    "istextorbinary": "^9.5.0",
     "jest": "^30.4.2",
     "mongoose": "^9.6.2",
     "nodemon": "^3.1.14",
-    "openai": "^6.37.0"
+    "openai": "^6.37.0",
+    "path": "^0.12.7",
+    "simple-git": "^3.36.0"
   }
 }
