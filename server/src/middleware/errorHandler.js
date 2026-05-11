@@ -1,5 +1,9 @@
 export const globalErrorHandler = (err, req, res, next) => {
-  err.statusCode = err.statusCode || 500;
+  const parsedStatusCode = Number(err?.statusCode);
+  err.statusCode =
+    Number.isInteger(parsedStatusCode) && parsedStatusCode >= 100
+      ? parsedStatusCode
+      : 500;
   err.status = err.status || "error";
 
   res.status(err.statusCode).json({

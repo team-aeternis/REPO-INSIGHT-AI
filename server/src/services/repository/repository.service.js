@@ -8,14 +8,14 @@ import { walkFiles } from "../parser/fileWalker.js";
 export const getAllRepositories = async () => {
   try {
   } catch (error) {
-    throw new ExpressError(error.status, error.message);
+    throw new ExpressError(error.statusCode || 500, error.message);
   }
 };
 
 export const getRepositoryById = async (id) => {
   try {
   } catch (error) {
-    throw new ExpressError(error.status, error.message);
+    throw new ExpressError(error.statusCode || 500, error.message);
   }
 };
 
@@ -23,7 +23,10 @@ export const createRepository = async (repositoryData) => {
   const transaction = await mongoose.startSession();
   transaction.startTransaction();
   try {
-    const { name, url } = repositoryData;
+    console.log("Creating repository with data:", repositoryData);
+    const { url } = repositoryData;
+
+    let name = repositoryData.name || url.split("/").slice(-1)[0].replace(".git", "");
 
     if (!name || !url) {
       throw new ExpressError(400, "Name and URL are required");
@@ -84,7 +87,7 @@ export const createRepository = async (repositoryData) => {
   } catch (error) {
     await transaction.abortTransaction();
     await transaction.endSession();
-    throw new ExpressError(error.status || 500, error.message);
+    throw new ExpressError(error.statusCode || 500, error.message);
   }
 };
 
@@ -124,7 +127,7 @@ export const updateRepository = async (id, repositoryData) => {
   } catch (error) {
     await transaction.abortTransaction();
     await transaction.endSession();
-    throw new ExpressError(error.status || 500, error.message);
+    throw new ExpressError(error.statusCode || 500, error.message);
   }
 };
 
@@ -144,6 +147,6 @@ export const deleteRepository = async (id) => {
   } catch (error) {
     await transaction.abortTransaction();
     await transaction.endSession();
-    throw new ExpressError(error.status || 500, error.message);
+    throw new ExpressError(error.statusCode || 500, error.message);
   }
 };
