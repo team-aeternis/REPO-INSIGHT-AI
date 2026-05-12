@@ -1,5 +1,5 @@
 import SendIcon from "@mui/icons-material/Send";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { submitRepo } from "../services/repoService";
 import { toast } from "react-toastify";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -11,6 +11,7 @@ export default function ExplorePage() {
   const [isLoading, setIsLoading] = useState(false);
   const [repoReady, setRepoReady] = useState(false);
   const [activeRepoUrl, setActiveRepoUrl] = useState("");
+  const inFlightRef = useRef(false);
 
   const handleChange = (e) => {
     e.preventDefault();
@@ -19,9 +20,10 @@ export default function ExplorePage() {
 
   const handleClick = async (e) => {
     e.preventDefault();
-    if (!query.trim() || isLoading) return;
+    if (!query.trim() || isLoading || inFlightRef.current) return;
 
     try {
+      inFlightRef.current = true;
       setIsLoading(true);
 
       if (!repoReady) {
@@ -42,6 +44,7 @@ export default function ExplorePage() {
       toast.error(error?.message || "Request failed");
     } finally {
       setIsLoading(false);
+      inFlightRef.current = false;
     }
   };
 

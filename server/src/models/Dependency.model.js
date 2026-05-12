@@ -14,6 +14,12 @@ const dependencySchema = new mongoose.Schema({
     required: true
   },
 
+  ecosystem: {
+    type: String,
+    enum: ["nodejs", "python", "golang", "rust", "java", "unknown"],
+    default: "unknown"
+  },
+
   version: String,
 
   type: {

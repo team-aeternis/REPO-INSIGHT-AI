@@ -1,6 +1,10 @@
 import ExpressError from "../../utils/Error.util.js";
 import RepositoryModel from "../../models/Repository.model.js";
-import mongoose from "mongoose";
+import DependencyModel from "../../models/Dependency.model.js";
+import fs from "fs";
+
+import { extractDependencies } from "../parser/extractDependencies.js";
+import { detectEntryPoints } from "../parser/detectEntryPoints.js";
 
 import { cloneRepo } from "../github/cloneRepo.js";
 import { walkFiles } from "../parser/fileWalker.js";
@@ -20,80 +24,87 @@ export const getRepositoryById = async (id) => {
 };
 
 export const createRepository = async (repositoryData) => {
-  const transaction = await mongoose.startSession();
-  transaction.startTransaction();
+  let repoPath = null;
   try {
-    console.log("Creating repository with data:", repositoryData);
     const { url } = repositoryData;
-
-    let name = repositoryData.name || url.split("/").slice(-1)[0].replace(".git", "");
+    let name =
+      repositoryData.name || url.split("/").slice(-1)[0].replace(".git", "");
+    const owner = repositoryData.owner || url.split("/").slice(-2)[0] || "Unknown";
 
     if (!name || !url) {
       throw new ExpressError(400, "Name and URL are required");
     }
 
-    const existingRepo = await RepositoryModel.findOne({ githubUrl: url });
+    // 1) Clone first. If this fails, no DB write happens.
+    const cloneResult = await cloneRepo(url);
+    repoPath = cloneResult.repoPath;
 
-    if (existingRepo) {
-      return {
-        success: false,
-        error: "Repository with the same URL already exists",
-        message: "Repository creation failed",
-        status: 400,
-      };
-    }
+    // 2) Parse files. If this fails, no DB write happens.
+    const allFiles = walkFiles(repoPath);
+    const { ecosystem, dependencies, devDependencies } =
+      await extractDependencies(allFiles);
 
-    console.log("Creating repository with data:", repositoryData);
 
-    // create new repository with pending status
 
-    const [newRepository] = await RepositoryModel.create(
-      [
-        {
-          githubUrl: url,
-          repoName: name,
-          owner: repositoryData.owner || "Unknown",
-
-          status: "processing",
-        },
-      ],
-
+    // 3) Single DB upsert: update if exists, create if not.
+    const repositoryDoc = await RepositoryModel.findOneAndUpdate(
+      { githubUrl: url },
       {
-        session: transaction,
+        githubUrl: url,
+        repoName: name,
+        owner,
+        localPath: repoPath,
+        status: "completed",
       },
+      { returnDocument: "after", upsert: true, setDefaultsOnInsert: true },
     );
 
-    // clone repo and get local path
+    await DependencyModel.deleteMany({ repositoryId: repositoryDoc._id });
 
-    const { repoPath } = await cloneRepo(url, transaction);
+    const dependencyDocs = [
+      ...dependencies.map((dep) => ({
+        repositoryId: repositoryDoc._id,
+        ecosystem: ecosystem || "unknown",
+        packageName: dep?.name || "unknown",
+        version: dep?.version || "unknown",
+        type: "production",
+      })),
+      ...devDependencies.map((dep) => ({
+        repositoryId: repositoryDoc._id,
+        ecosystem: ecosystem || "unknown",
+        packageName: dep?.name || "unknown",
+        version: dep?.version || "unknown",
+        type: "development",
+      })),
+    ];
 
-    newRepository.localPath = repoPath;
-    await newRepository.save({ session: transaction });
+    if (dependencyDocs.length > 0) {
+      await DependencyModel.insertMany(dependencyDocs);
+    }
 
-    // walk through files in the repository to extract useful files for analysis
 
-    const allFiles = walkFiles(repoPath);
+    const detectedEntryPoints = await detectEntryPoints(allFiles);
 
-    console.log("All files in the repository:", allFiles);
+    repositoryDoc.entryPoints = detectedEntryPoints;
+    await repositoryDoc.save();
 
-    await transaction.commitTransaction();
-    await transaction.endSession();
     return {
       success: true,
-      data: newRepository.repoName,
-      message: "Repository created successfully",
-      status: 201,
+      data: repositoryDoc.repoName,
+      message: "Repository submitted successfully",
+      status: 200,
     };
   } catch (error) {
-    await transaction.abortTransaction();
-    await transaction.endSession();
+    // Cleanup clone on any failure so clone+DB stay consistent.
+    if (repoPath && fs.existsSync(repoPath)) {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
+
     throw new ExpressError(error.statusCode || 500, error.message);
   }
 };
 
 export const updateRepository = async (id, repositoryData) => {
-  const transaction = await mongoose.startSession();
-  transaction.startTransaction();
   try {
     const { name, url } = repositoryData;
 
@@ -102,10 +113,8 @@ export const updateRepository = async (id, repositoryData) => {
     }
 
     const existingRepo = await RepositoryModel.findOne({ githubUrl: url });
-    console.log("Existing repository:", existingRepo);
-    if (existingRepo) {
-      console.log("Existing repository:", existingRepo);
-    }
+    
+    
 
     const updatedRepository = await RepositoryModel.findByIdAndUpdate(
       id,
@@ -116,8 +125,6 @@ export const updateRepository = async (id, repositoryData) => {
       },
       { new: true },
     );
-    await transaction.commitTransaction();
-    await transaction.endSession();
     return {
       success: true,
       data: updatedRepository.repoName,
@@ -125,19 +132,13 @@ export const updateRepository = async (id, repositoryData) => {
       status: 200,
     };
   } catch (error) {
-    await transaction.abortTransaction();
-    await transaction.endSession();
     throw new ExpressError(error.statusCode || 500, error.message);
   }
 };
 
 export const deleteRepository = async (id) => {
-  const transaction = await mongoose.startSession();
-  transaction.startTransaction();
   try {
     const deletedRepository = await RepositoryModel.findByIdAndDelete(id);
-    await transaction.commitTransaction();
-    await transaction.endSession();
     return {
       success: true,
       data: deletedRepository.repoName,
@@ -145,8 +146,6 @@ export const deleteRepository = async (id) => {
       status: 200,
     };
   } catch (error) {
-    await transaction.abortTransaction();
-    await transaction.endSession();
     throw new ExpressError(error.statusCode || 500, error.message);
   }
 };
