@@ -1,63 +1,83 @@
-
-
 import mongoose from "mongoose";
 
-const repositorySchema = new mongoose.Schema({
+const repositorySchema = new mongoose.Schema(
+  {
+    githubUrl: {
+      type: String,
+      required: true,
+      unique: true,
+    },
 
-  githubUrl: {
-    type: String,
-    required: true,
-    unique: true
+    repoName: {
+      type: String,
+      required: true,
+    },
+
+    owner: {
+      type: String,
+      required: false,
+    },
+
+    description: String,
+
+    defaultBranch: {
+      type: String,
+      default: "main",
+    },
+
+    techStack: {
+      frontend: [String],
+
+      backend: [String],
+
+      database: [String],
+
+      styling: [String],
+    },
+
+    entryPoints: [
+      {
+        type: {
+          type: String,
+        },
+
+        ecosystem: {
+          type: String,
+        },
+
+        framework: {
+          type: String,
+        },
+
+        confidence: {
+          type: String,
+        },
+
+        file: {
+          type: String,
+        },
+      },
+    ],
+
+    criticalPaths: [
+      {
+        type: String,
+      },
+    ],
+
+    architectureSummary: String,
+
+    localPath: String,
+
+    status: {
+      type: String,
+      enum: ["pending", "processing", "completed", "failed"],
+      default: "pending",
+    },
   },
-
-  repoName: {
-    type: String,
-    required: true
+  {
+    timestamps: true,
   },
-
-  owner: {
-    type: String,
-    required: false
-  },
-
-  description: String,
-
-  defaultBranch: {
-    type: String,
-    default: "main"
-  },
-
-  techStack: [{
-    type: String
-  }],
-
-  dependencies: [{
-    type: String
-  }],
-
-  entryPoints: [{
-    type: String
-  }],
-
-  criticalPaths: [{
-    type: String
-  }],
-
-  architectureSummary: String,
-
-  localPath: String,
-
-  status: {
-    type: String,
-    enum: ["pending", "processing", "completed", "failed"],
-    default: "pending"
-  }
-
-}, {
-  timestamps: true
-});
-
-export default mongoose.model(
-  "Repository",
-  repositorySchema
 );
+
+export default mongoose.model("Repository", repositorySchema);

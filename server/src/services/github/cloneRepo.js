@@ -5,7 +5,7 @@ import crypto from "crypto";
 
 const git = simpleGit();
 
-export const cloneRepo = async (githubUrl, transaction) => {
+export const cloneRepo = async (githubUrl) => {
 
   try{
     // unique workspace id
