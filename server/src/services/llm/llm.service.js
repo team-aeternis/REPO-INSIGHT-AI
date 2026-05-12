@@ -1,7 +1,7 @@
-import { generateResponse } from "./providers/openai.js";
+// import { generateResponse } from "./providers/openai.js";
 
-export const askLLM = async (prompt) => {
+// export const askLLM = async (prompt) => {
 
-   return await generateResponse(prompt);
+//    return await generateResponse(prompt);
 
-};
+// };
