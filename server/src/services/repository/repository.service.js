@@ -2,6 +2,7 @@ import ExpressError from "../../utils/Error.util.js";
 import RepositoryModel from "../../models/Repository.model.js";
 import DependencyModel from "../../models/Dependency.model.js";
 import EmbeddingChunkModel from "../../models/EmbeddingChunk.model.js";
+import AnalyzeResultModel from "../../models/AnalyzeResult.model.js";
 import { generateEmbeddings } from "../embeddings/generateEmbeddings.js";
 import FileModel from "../../models/File.model.js";
 import fs from "fs";
@@ -10,6 +11,7 @@ import path from "path";
 import { extractDependencies } from "../parser/extractDependencies.js";
 import { detectEntryPoints } from "../parser/detectEntryPoints.js";
 import { extractImports } from "../parser/extractImports.js";
+import { summarizeRepo } from "../parser/summarizeRepo.js";
 
 import { cloneRepo } from "../github/cloneRepo.js";
 import { walkFiles } from "../parser/fileWalker.js";
@@ -136,6 +138,15 @@ export const createRepository = async (repositoryData) => {
 
     await EmbeddingChunkModel.insertMany(embeddingDocuments);
 
+    const summary = await summarizeRepo(repositoryDoc._id);
+
+    await repositoryDoc.save();
+
+    await AnalyzeResultModel.create({
+      repositoryId: repositoryDoc._id,
+
+      architectureSummary: summary,
+    });
 
     return {
       success: true,
