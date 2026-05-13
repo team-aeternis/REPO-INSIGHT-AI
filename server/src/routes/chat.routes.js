@@ -1,19 +1,19 @@
 import express from "express";
-// import { askLLM } from "../services/llm/llm.service.js";
 
-const router = express.Router();
+import {
+   askRepositoryQuestion
+}
+from "../controllers/chat.controller.js";
 
-router.post("/", async (req, res) => {
+const router =
+   express.Router();
 
-   const { prompt } = req.body;
+router.post(
 
-   // const response = await askLLM(prompt);
+   "/ask",
 
-   res.json({
-      success: true,
-      // response
-   });
+   askRepositoryQuestion
+);
 
-});
-
-export const chatRouter = router;
+export const chatRouter =
+   router;
