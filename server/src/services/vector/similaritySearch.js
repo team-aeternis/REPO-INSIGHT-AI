@@ -1,0 +1,59 @@
+import cosineSimilarity
+from "compute-cosine-similarity";
+
+import EmbeddingChunkModel
+from "../../models/EmbeddingChunk.model.js";
+
+import { createEmbedding }
+from "../llm/providers/huggingFace.js";
+
+export const similaritySearch =
+async (
+
+   repositoryId,
+
+   query,
+
+   topK = 5
+
+) => {
+
+   const queryEmbedding =
+      await createEmbedding(
+         query
+      );
+
+   const chunks =
+      await EmbeddingChunkModel.find({
+
+         repositoryId
+      });
+
+   const scoredChunks =
+      chunks.map(chunk => {
+
+         const score =
+            cosineSimilarity(
+
+               queryEmbedding,
+
+               chunk.embeddingVector
+            );
+
+         return {
+
+            chunk,
+
+            score
+         };
+      });
+
+   scoredChunks.sort(
+
+      (a, b) =>
+         b.score - a.score
+   );
+
+   return scoredChunks
+      .slice(0, topK);
+};
