@@ -11,5 +11,6 @@ export const env = {
     DB_NAME: process.env.MONGO_DB_NAME,
     FRONTEND_URL: process.env.FRONTEND_URL,
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    HUGGINGFACE_API_KEY: process.env.HUGGINGFACE_API_KEY
     
 }

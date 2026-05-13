@@ -65,8 +65,6 @@ const repositorySchema = new mongoose.Schema(
       },
     ],
 
-    architectureSummary: String,
-
     localPath: String,
 
     status: {

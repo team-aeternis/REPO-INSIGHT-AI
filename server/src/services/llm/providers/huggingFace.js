@@ -3,11 +3,13 @@ import {
 }
 from "@huggingface/inference";
 
+import { env }
+from "../../../config/env.js";
+
 const client =
    new HfInference(
 
-      process.env
-         .HUGGINGFACE_API_KEY
+      env.HUGGINGFACE_API_KEY
    );
 
 export const createEmbedding =
@@ -15,8 +17,18 @@ async (text) => {
 
    try {
 
+      if (!text?.trim()) {
+
+         throw new Error(
+            "Text is required for embedding"
+         );
+      }
+
       const embedding =
          await client.featureExtraction({
+
+            provider:
+            "hf-inference",
 
             model:
             "sentence-transformers/all-MiniLM-L6-v2",
