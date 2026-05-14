@@ -22,6 +22,11 @@ app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(requestLogger);
 
+console.log(
+  "FRONTEND_URL:",
+  env.FRONTEND_URL
+);
+
 app.use(
   cors({
     origin: env.FRONTEND_URL,
