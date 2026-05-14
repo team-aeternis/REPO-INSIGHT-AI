@@ -18,10 +18,22 @@ async (
 
 ) => {
 
-   const queryEmbedding =
-      await createEmbedding(
-         query
+   let queryEmbedding = null;
+   try {
+      queryEmbedding =
+         await createEmbedding(
+            query,
+            {
+               retries: 2,
+               baseDelayMs: 500
+            }
+         );
+   } catch (error) {
+      console.warn(
+         `[SimilaritySearch] Query embedding unavailable for "${query}". Returning empty results.`
       );
+      return [];
+   }
 
    const chunks =
       await EmbeddingChunkModel.find({

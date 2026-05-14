@@ -10,6 +10,7 @@ import fs from "fs";
 import path from "path";
 
 import { extractDependencies } from "../parser/extractDependencies.js";
+import { detectTechStack } from "../parser/detectTechStack.js";
 import { detectEntryPoints } from "../parser/detectEntryPoints.js";
 import { extractImports } from "../parser/extractImports.js";
 import { summarizeRepo } from "../parser/summarizeRepo.js";
@@ -17,6 +18,45 @@ import { criticalPathAnalysis } from "../analysis/criticalPathAnalysis.js";
 
 import { cloneRepo } from "../github/cloneRepo.js";
 import { walkFiles } from "../parser/fileWalker.js";
+
+const isValidGitHubRepoUrl = (rawUrl = "") => {
+  try {
+    const parsed = new URL(String(rawUrl).trim());
+    if (!["https:", "http:"].includes(parsed.protocol)) return false;
+    if (!["github.com", "www.github.com"].includes(parsed.hostname.toLowerCase())) {
+      return false;
+    }
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length < 2) return false;
+    if (!parts[0] || !parts[1]) return false;
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const mapCloneError = (error) => {
+  const msg = String(error?.message || "").toLowerCase();
+  if (
+    msg.includes("repository not found") ||
+    msg.includes("not found") ||
+    msg.includes("unable to access") ||
+    msg.includes("could not resolve host")
+  ) {
+    return new ExpressError(400, "Repository link is invalid or private.");
+  }
+
+  if (
+    msg.includes("authentication failed") ||
+    msg.includes("could not read username") ||
+    msg.includes("permission denied") ||
+    msg.includes("access denied")
+  ) {
+    return new ExpressError(403, "Repository link is private or inaccessible.");
+  }
+
+  return new ExpressError(500, "Failed to clone repository.");
+};
 
 export const getAllRepositories = async () => {
   try {
@@ -60,33 +100,43 @@ export const createRepository = async (repositoryData) => {
   let repoPath = null;
   try {
     const { url } = repositoryData;
+    const normalizedUrl = String(url || "").trim();
     let name =
-      repositoryData.name || url.split("/").slice(-1)[0].replace(".git", "");
+      repositoryData.name || normalizedUrl.split("/").slice(-1)[0].replace(".git", "");
     const owner =
-      repositoryData.owner || url.split("/").slice(-2)[0] || "Unknown";
+      repositoryData.owner || normalizedUrl.split("/").slice(-2)[0] || "Unknown";
 
-    if (!name || !url) {
+    if (!name || !normalizedUrl) {
       throw new ExpressError(400, "Name and URL are required");
+    }
+    if (!isValidGitHubRepoUrl(normalizedUrl)) {
+      throw new ExpressError(400, "Submit a correct GitHub repository URL.");
     }
 
     // 1) Clone first. If this fails, no DB write happens.
-    const cloneResult = await cloneRepo(url);
+    let cloneResult;
+    try {
+      cloneResult = await cloneRepo(normalizedUrl);
+    } catch (cloneError) {
+      throw mapCloneError(cloneError);
+    }
     repoPath = cloneResult.repoPath;
 
     // 2) Parse files. If this fails, no DB write happens.
     const allFiles = walkFiles(repoPath);
     const { ecosystem, dependencies, devDependencies } =
       await extractDependencies(allFiles);
+    const techStack = detectTechStack({ dependencies, devDependencies });
 
     // 3) Single DB upsert: update if exists, create if not.
     const repositoryDoc = await RepositoryModel.findOneAndUpdate(
-      { githubUrl: url },
+      { githubUrl: normalizedUrl },
       {
-        githubUrl: url,
+        githubUrl: normalizedUrl,
         repoName: name,
         owner,
         localPath: repoPath,
-        status: "completed",
+        status: "processing",
       },
       { returnDocument: "after", upsert: true, setDefaultsOnInsert: true },
     );
@@ -116,6 +166,7 @@ export const createRepository = async (repositoryData) => {
 
     const detectedEntryPoints = await detectEntryPoints(allFiles);
 
+    repositoryDoc.techStack = techStack;
     repositoryDoc.entryPoints = detectedEntryPoints;
     await repositoryDoc.save();
 
@@ -152,6 +203,8 @@ export const createRepository = async (repositoryData) => {
       await FileModel.insertMany(validFileDocs);
     }
 
+    await EmbeddingChunkModel.deleteMany({ repositoryId: repositoryDoc._id });
+
     const fileDocuments = await FileModel.find({
       repositoryId: repositoryDoc._id,
     });
@@ -166,13 +219,11 @@ export const createRepository = async (repositoryData) => {
 
     const summary = await summarizeRepo(repositoryDoc._id);
 
-    await repositoryDoc.save();
-
-    const analyzeResult = await AnalyzeResultModel.create({
-      repositoryId: repositoryDoc._id,
-
-      architectureSummary: summary,
-    });
+    const analyzeResult = await AnalyzeResultModel.findOneAndUpdate(
+      { repositoryId: repositoryDoc._id },
+      { architectureSummary: summary },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
 
     const criticalPath = await criticalPathAnalysis(repositoryDoc._id);
 
@@ -198,16 +249,20 @@ export const createRepository = async (repositoryData) => {
         repositoryId: repositoryDoc._id,
         dashboard: dashboardPayload,
       },
-      message: "Repository submitted successfully",
+      message: "Repository analyzed and updated successfully",
       status: 200,
     };
   } catch (error) {
-    // Cleanup clone on any failure so clone+DB stay consistent.
-    if (repoPath && fs.existsSync(repoPath)) {
-      fs.rmSync(repoPath, { recursive: true, force: true });
+    if (error instanceof ExpressError) {
+      throw error;
     }
 
     throw new ExpressError(error.statusCode || 500, error.message);
+  } finally {
+    // Cleanup clone on both success and failure.
+    if (repoPath && fs.existsSync(repoPath)) {
+      fs.rmSync(repoPath, { recursive: true, force: true });
+    }
   }
 };
 

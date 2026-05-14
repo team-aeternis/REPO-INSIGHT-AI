@@ -1,7 +1,8 @@
 import express from "express";
 
 import {
-   askRepositoryQuestion
+   askRepositoryQuestion,
+   getChatSessionsSummary
 }
 from "../controllers/chat.controller.js";
 
@@ -13,6 +14,13 @@ router.post(
    "/ask",
 
    askRepositoryQuestion
+);
+
+router.get(
+
+   "/sessions/:repositoryId",
+
+   getChatSessionsSummary
 );
 
 export const chatRouter =

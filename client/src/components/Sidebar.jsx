@@ -4,6 +4,7 @@ import TravelExploreIcon from "@mui/icons-material/TravelExplore";
 import AutoGraphIcon from "@mui/icons-material/AutoGraph";
 import GitHubIcon from "@mui/icons-material/GitHub";
 import AddCommentIcon from "@mui/icons-material/AddComment";
+import AdminPanelSettingsIcon from "@mui/icons-material/AdminPanelSettings";
 
 export default function Sidebar({ open, setOpen }) {
   const navigate = useNavigate();
@@ -58,6 +59,9 @@ export default function Sidebar({ open, setOpen }) {
           className={linkClass}
         >
           <TravelExploreIcon fontSize="small" /> Explore Repository
+        </NavLink>
+        <NavLink to="/admin" onClick={() => setOpen(false)} className={linkClass}>
+          <AdminPanelSettingsIcon fontSize="small" /> Admin Panel
         </NavLink>
       </nav>
 

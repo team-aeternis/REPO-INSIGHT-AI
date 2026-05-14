@@ -16,9 +16,13 @@ export const submitRepo = async (repoData) => {
   }
 };
 
-export const askRepoQuestion = async ({ repositoryId, question }) => {
+export const askRepoQuestion = async ({ repositoryId, question, sessionId }) => {
   try {
-    const response = await API.post("/api/chat/ask", { repositoryId, question });
+    const response = await API.post("/api/chat/ask", {
+      repositoryId,
+      question,
+      sessionId,
+    });
     return response.data;
   } catch (error) {
     return {

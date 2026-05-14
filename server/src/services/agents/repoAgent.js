@@ -1,38 +1,14 @@
-
+import path from "path";
+import RepositoryModel from "../../models/Repository.model.js";
+import DependencyModel from "../../models/Dependency.model.js";
+import FileModel from "../../models/File.model.js";
+import AnalyzeResultModel from "../../models/AnalyzeResult.model.js";
+import { extractModules } from "../parser/extractModules.js";
+import { repoSearchTool } from "./tools/repoSearchTool.js";
 import { generateResponse } from "../llm/providers/openai.js";
 
-import fs from "fs";
-
-import path from "path";
-
-import { dependencyTool } from "./tools/dependencyTool.js";
-
-import { entryPointTool } from "./tools/entryPointTool.js";
-
-import { repoSearchTool } from "./tools/repoSearchTool.js";
-
-import { extractModules } from "../parser/extractModules.js";
-
-import FileModel from "../../models/File.model.js";
-
-import RepositoryModel from "../../models/Repository.model.js";
-
-import DependencyModel from "../../models/Dependency.model.js";
-
-const MAX_CONTEXT_CHARS = 1400;
-
-const clipForPrompt = (value, limit = MAX_CONTEXT_CHARS) => {
-  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-
-  if (!text || text.length <= limit) {
-    return text || "";
-  }
-
-  return `${text.slice(0, limit)}\n...[truncated for readability]`;
-};
-
 const normalizeRepoPath = (repository, filePath = "") => {
-  const normalized = filePath.replace(/\\/g, "/");
+  const normalized = String(filePath || "").replace(/\\/g, "/");
   const localPath = repository?.localPath?.replace(/\\/g, "/");
 
   if (localPath && normalized.startsWith(localPath)) {
@@ -41,363 +17,551 @@ const normalizeRepoPath = (repository, filePath = "") => {
 
   const serverIndex = normalized.indexOf("server/");
   const clientIndex = normalized.indexOf("client/");
-
   if (serverIndex !== -1) return normalized.slice(serverIndex);
   if (clientIndex !== -1) return normalized.slice(clientIndex);
-
   return normalized;
 };
 
-const humanizeModelName = (fileName = "") =>
-  fileName
-    .replace(/\.(model|models|schema)\./i, ".")
-    .replace(/\.[^.]+$/, "")
-    .replace(/[-_]/g, " ");
+const normalizePathList = (repository, paths = []) =>
+  [...new Set((paths || []).map((p) => normalizeRepoPath(repository, p)).filter(Boolean))];
 
-const findModelFiles = async (repositoryId) => {
-  const repository = await RepositoryModel.findById(repositoryId).lean();
+const normalizeNavigation = (repository, items = []) =>
+  (items || [])
+    .map((item) => ({
+      ...item,
+      file: normalizeRepoPath(repository, item?.file || ""),
+    }))
+    .filter((item) => item.file);
 
-  const modelFiles = await FileModel.find({
-    repositoryId,
-    $or: [
-      { category: "model" },
-      { filePath: /(^|[/\\])models?([/\\]|$)/i },
-      { fileName: /\.model\./i },
-      { fileName: /\.schema\./i },
-    ],
-  })
-    .select("filePath fileName summary exports imports")
-    .lean();
+const includesAny = (text, words) => words.some((w) => text.includes(w));
 
-  const indexedFiles = modelFiles.map((file) => ({
-    filePath: normalizeRepoPath(repository, file.filePath),
-    fileName: file.fileName || path.basename(file.filePath || ""),
-    summary: file.summary,
-    exports: file.exports,
-    imports: file.imports,
-  }));
+const tokenize = (text = "") =>
+  String(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9_./-]+/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 2);
 
-  if (indexedFiles.length > 0 || !repository?.localPath) {
-    return indexedFiles;
+const buildRepoSignalSet = (repository, dependencies = [], files = [], modules = {}) => {
+  const signals = new Set();
+  for (const dep of dependencies) {
+    if (dep?.packageName) signals.add(String(dep.packageName).toLowerCase());
   }
-
-  const fallbackFiles = [];
-  const visit = (dirPath) => {
-    if (!fs.existsSync(dirPath)) return;
-
-    for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
-      if (["node_modules", ".git", "dist", "build"].includes(entry.name)) {
-        continue;
-      }
-
-      const fullPath = path.join(dirPath, entry.name);
-
-      if (entry.isDirectory()) {
-        visit(fullPath);
-        continue;
-      }
-
-      const normalized = fullPath.replace(/\\/g, "/");
-      const isModelFile =
-        /(^|[/\\])models?([/\\]|$)/i.test(normalized) ||
-        /\.(model|models|schema)\./i.test(entry.name);
-
-      if (!isModelFile) continue;
-
-      fallbackFiles.push({
-        filePath: normalizeRepoPath(repository, fullPath),
-        fileName: entry.name,
-      });
+  for (const file of files) {
+    const filePath = normalizeRepoPath(repository, file?.filePath || "");
+    const fileName = String(file?.fileName || path.basename(filePath || "")).toLowerCase();
+    if (fileName) signals.add(fileName);
+    for (const part of filePath.toLowerCase().split("/")) {
+      if (part && part.length > 2) signals.add(part);
     }
-  };
-
-  visit(repository.localPath);
-
-  return fallbackFiles;
+  }
+  for (const key of Object.keys(modules || {})) {
+    if (key) signals.add(String(key).toLowerCase());
+  }
+  for (const entry of repository?.entryPoints || []) {
+    const file = (typeof entry === "string" ? entry : entry?.file) || "";
+    const normalized = normalizeRepoPath(repository, file).toLowerCase();
+    if (normalized) signals.add(normalized);
+  }
+  return signals;
 };
 
-const formatModelAnswer = (modelFiles) => {
-  if (modelFiles.length === 0) {
-    return "I could not find any model or schema files in this repository index.";
+const isRepositoryRelevant = ({
+  question = "",
+  repository,
+  dependencies = [],
+  files = [],
+  modules = {},
+  relevantChunks = [],
+}) => {
+  const tokens = tokenize(question);
+  if (!tokens.length) return false;
+
+  const repoSignals = buildRepoSignalSet(repository, dependencies, files, modules);
+  const overlap = tokens.filter((t) => repoSignals.has(t)).length;
+
+  const bestScore = Math.max(
+    ...relevantChunks
+      .map((chunk) => Number(chunk?.score))
+      .filter((score) => Number.isFinite(score)),
+    -1,
+  );
+
+  // Accept if we have either lexical overlap with repo index or strong semantic retrieval.
+  return overlap >= 1 || bestScore >= 0.22;
+};
+
+const classifyIntent = (question = "") => {
+  const q = question.toLowerCase();
+
+  if (
+    includesAny(q, [
+      "architecture",
+      "high level design",
+      "repo summary",
+      "system design",
+      "overall flow",
+    ])
+  ) {
+    return "architecture";
   }
 
-  const modelLines = modelFiles
-    .slice(0, 20)
-    .map((file) => {
-      const modelName = humanizeModelName(file.fileName);
-      return `- **${modelName}** - \`${file.filePath}\``;
+  if (
+    includesAny(q, [
+      "onboarding",
+      "where to start",
+      "getting started",
+      "new developer start",
+      "new developer",
+      "start in this repository",
+      "how should i start",
+    ])
+  ) {
+    return "onboarding";
+  }
+
+  if (includesAny(q, ["critical path", "execution path", "request flow"])) {
+    return "critical_path";
+  }
+
+  if (
+    includesAny(q, [
+      "dependency",
+      "dependencies",
+      "library",
+      "libraries",
+      "package",
+      "framework",
+    ])
+  ) {
+    return "dependencies";
+  }
+
+  if (includesAny(q, ["tech stack", "built with", "technology stack"])) {
+    return "tech_stack";
+  }
+
+  if (
+    includesAny(q, [
+      "entry point",
+      "start file",
+      "bootstrap",
+      "main file",
+      "where execution starts",
+    ])
+  ) {
+    return "entry_points";
+  }
+
+  if (includesAny(q, ["module", "modules", "feature", "sections"])) {
+    return "modules";
+  }
+
+  if (includesAny(q, ["all files", "list files", "file uses", "files used", "what files"])) {
+    return "files";
+  }
+
+  return "general";
+};
+
+const detectTechStackFromDeps = (dependencies = []) => {
+  const packages = new Set(dependencies.map((d) => d.packageName).filter(Boolean));
+  const has = (...names) => names.some((n) => packages.has(n));
+
+  return {
+    frontend: [
+      has("react") && "React",
+      has("next") && "Next.js",
+      has("react-router-dom") && "React Router",
+      has("redux", "@reduxjs/toolkit", "react-redux") && "Redux",
+      has("tailwindcss") && "Tailwind CSS",
+      has("@mui/material") && "Material UI",
+    ].filter(Boolean),
+    backend: [
+      has("express") && "Express",
+      has("nestjs") && "NestJS",
+      has("fastify") && "Fastify",
+      has("koa") && "Koa",
+      has("socket.io") && "Socket.IO",
+    ].filter(Boolean),
+    database: [
+      has("mongoose", "mongodb") && "MongoDB",
+      has("pg") && "PostgreSQL",
+      has("mysql2") && "MySQL",
+      has("sqlite3") && "SQLite",
+      has("redis", "ioredis") && "Redis",
+    ].filter(Boolean),
+    styling: [
+      has("tailwindcss") && "Tailwind CSS",
+      has("bootstrap") && "Bootstrap",
+      has("sass") && "Sass",
+    ].filter(Boolean),
+  };
+};
+
+const formatArchitecture = (analysis, repository, modules) => {
+  const summary = analysis?.architectureSummary?.trim();
+  if (!summary) {
+    return "I could not find enough repository evidence.";
+  }
+
+  const entryPoints = (repository?.entryPoints || [])
+    .slice(0, 6)
+    .map((e) => `\`${e?.file || e}\``)
+    .filter(Boolean);
+
+  const moduleNames = Object.keys(modules || {}).slice(0, 8);
+  const moduleLine = moduleNames.length ? moduleNames.join(", ") : "Not detected";
+  const entryLine = entryPoints.length ? entryPoints.join(", ") : "Not detected";
+
+  return `${summary}\n\n**Key entry points:** ${entryLine}\n\n**Detected modules:** ${moduleLine}`;
+};
+
+const formatDependencies = (dependencies = [], usageByPackage = {}) => {
+  if (!dependencies.length) return "I could not find dependency records for this repository.";
+
+  const sorted = [...dependencies].sort((a, b) =>
+    String(a.packageName || "").localeCompare(String(b.packageName || "")),
+  );
+
+  const lines = sorted
+    .slice(0, 40)
+    .map((d) => {
+      const usedIn = (usageByPackage[d.packageName] || []).slice(0, 3);
+      const usageText = usedIn.length
+        ? ` - used in ${usedIn.map((f) => `\`${f}\``).join(", ")}`
+        : " - usage file not found in index";
+      return `- \`${d.packageName}\` (${d.version || "unknown"})${usageText}`;
     })
     .join("\n");
 
   const extra =
-    modelFiles.length > 20
-      ? `\n\nI found ${modelFiles.length - 20} more model files. Ask for "all model files" if you want the complete list.`
+    sorted.length > 40
+      ? `\n\nShowing first 40 of ${sorted.length}. Ask "show all dependencies" for full list.`
       : "";
 
-  return `The repository uses these model/schema files:\n\n${modelLines}${extra}`;
+  return `I found **${sorted.length}** dependencies.\n\n${lines}${extra}`;
 };
 
-const formatTechStackAnswer = async (repositoryId) => {
-  const repository = await RepositoryModel.findById(repositoryId).lean();
-  const dependencies = await DependencyModel.find({ repositoryId })
-    .select("packageName version type ecosystem")
-    .lean();
+const formatFiles = (repository, files = []) => {
+  if (!files.length) return "I could not find indexed files for this repository.";
 
-  const packages = new Set(dependencies.map((dep) => dep.packageName));
-  const hasPackage = (...names) => names.some((name) => packages.has(name));
+  const normalized = files.map((f) => ({
+    ...f,
+    filePath: normalizeRepoPath(repository, f.filePath),
+  }));
 
-  const frontend = [
-    hasPackage("react") && "React",
-    hasPackage("vite", "@vitejs/plugin-react") && "Vite",
-    hasPackage("react-router-dom") && "React Router",
-    hasPackage("@reduxjs/toolkit", "react-redux") && "Redux Toolkit",
-    hasPackage("tailwindcss", "@tailwindcss/vite") && "Tailwind CSS",
-    hasPackage("@mui/material", "@mui/icons-material") && "Material UI",
-    hasPackage("axios") && "Axios",
-  ].filter(Boolean);
+  const categoryCount = normalized.reduce((acc, file) => {
+    const key = file.category || "unknown";
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
 
-  const backend = [
-    "Node.js",
-    hasPackage("express") && "Express",
-    hasPackage("mongoose") && "Mongoose",
-    hasPackage("openai") && "OpenAI-compatible SDK",
-    hasPackage("@huggingface/inference") && "Hugging Face Inference",
-    hasPackage("@google/generative-ai") && "Google Generative AI",
-    hasPackage("jest") && "Jest",
-  ].filter(Boolean);
-
-  const database = [
-    hasPackage("mongoose") && "MongoDB",
-    ...(repository?.techStack?.database || []),
-  ].filter(Boolean);
-
-  const sections = [
-    ["Frontend", frontend],
-    ["Backend", backend],
-    ["Database", [...new Set(database)]],
-  ]
-    .map(([label, values]) => `- **${label}:** ${values.length ? values.join(", ") : "Not clearly detected"}`)
+  const categories = Object.entries(categoryCount)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([name, count]) => `- **${name}:** ${count}`)
     .join("\n");
 
-  const packageHint = dependencies
-    .slice(0, 12)
-    .map((dep) => dep.packageName)
-    .join(", ");
+  const sample = normalized
+    .slice(0, 60)
+    .map((file) => `- \`${file.filePath}\``)
+    .join("\n");
 
-  return `This repository is a full-stack JavaScript app.\n\n${sections}\n\nEvidence comes from the repository dependency index${packageHint ? `, including \`${packageHint}\`` : ""}.`;
+  return `I found **${normalized.length}** indexed files.\n\nTop categories:\n${categories}\n\nSample files:\n${sample}`;
 };
 
-export const repoAgent = async (
-  repositoryId,
+const formatTechStack = (repository, dependencies) => {
+  const inferred = detectTechStackFromDeps(dependencies);
+  const persisted = repository?.techStack || {};
 
-  question,
-) => {
+  const merged = {
+    frontend: [...new Set([...(persisted.frontend || []), ...(inferred.frontend || [])])],
+    backend: [...new Set([...(persisted.backend || []), ...(inferred.backend || [])])],
+    database: [...new Set([...(persisted.database || []), ...(inferred.database || [])])],
+    styling: [...new Set([...(persisted.styling || []), ...(inferred.styling || [])])],
+  };
+
+  return [
+    "Detected tech stack:",
+    `- **Frontend:** ${merged.frontend.length ? merged.frontend.join(", ") : "Not clearly detected"}`,
+    `- **Backend:** ${merged.backend.length ? merged.backend.join(", ") : "Not clearly detected"}`,
+    `- **Database:** ${merged.database.length ? merged.database.join(", ") : "Not clearly detected"}`,
+    `- **Styling:** ${merged.styling.length ? merged.styling.join(", ") : "Not clearly detected"}`,
+  ].join("\n");
+};
+
+const formatEntryPoints = (repository) => {
+  const entries = repository?.entryPoints || [];
+  if (!entries.length) return "No entry points detected yet.";
+
+  const lines = entries
+    .slice(0, 20)
+    .map((entry) => {
+      const file = typeof entry === "string" ? entry : entry?.file;
+      const framework = typeof entry === "object" ? entry?.framework : "";
+      return `- \`${file}\`${framework ? ` (${framework})` : ""}`;
+    })
+    .join("\n");
+
+  return `Detected entry points:\n\n${lines}`;
+};
+
+const formatModules = (modules = {}) => {
+  const names = Object.keys(modules || {});
+  if (!names.length) return "No modules extracted yet.";
+
+  const lines = names
+    .slice(0, 12)
+    .map((name) => {
+      const files = Array.isArray(modules[name]) ? modules[name] : [];
+      return `- **${name}:** ${files.length} file(s)`;
+    })
+    .join("\n");
+
+  return `Detected repository modules:\n\n${lines}`;
+};
+
+const formatOnboarding = (analysis, repository) => {
+  if (analysis?.onboardingGuide?.trim()) return analysis.onboardingGuide;
+
+  const entryPoints = (repository?.entryPoints || [])
+    .slice(0, 5)
+    .map((e) => `\`${e?.file || e}\``)
+    .filter(Boolean);
+
+  return [
+    "Start from the entry points, then follow service and middleware flow.",
+    `- Entry points: ${entryPoints.length ? entryPoints.join(", ") : "Not detected"}`,
+    "- Read `server/src/routes/*` then matching controllers/services.",
+    "- Use dependency and module views to map responsibilities.",
+  ].join("\n");
+};
+
+export const repoAgent = async (repositoryId, question, chatHistory = []) => {
   try {
-    let context = "";
+    const [repository, analysis, dependencies, files] = await Promise.all([
+      RepositoryModel.findById(repositoryId).lean(),
+      AnalyzeResultModel.findOne({ repositoryId }).lean(),
+      DependencyModel.find({ repositoryId }).lean(),
+      FileModel.find({ repositoryId }).select("filePath fileName category extension imports").lean(),
+    ]);
 
+    if (!repository) {
+      return {
+        answer: "Repository not found for the provided repositoryId.",
+        sources: [],
+        navigationHelp: [],
+      };
+    }
+
+    const modules = analysis?.modules && Object.keys(analysis.modules).length
+      ? analysis.modules
+      : await extractModules(repositoryId);
+
+    const intent = classifyIntent(question);
+    let answer = "";
     let sources = [];
-
     let navigationHelp = [];
 
-    const lowerQuestion = question.toLowerCase();
+    if (intent === "architecture") {
+      answer = formatArchitecture(analysis, repository, modules);
+      sources = normalizePathList(repository, [
+        ...(repository.entryPoints || []).map((e) => (typeof e === "string" ? e : e?.file)),
+      ]).slice(0, 8);
+      navigationHelp = normalizeNavigation(
+        repository,
+        sources.map((file) => ({ title: "Entry point", file })),
+      );
+      return { answer, sources, navigationHelp };
+    }
 
-    // dependency related questions
+    if (intent === "dependencies") {
+      const usageByPackage = {};
+      const normalizedFiles = files.map((f) => ({
+        ...f,
+        filePath: normalizeRepoPath(repository, f.filePath),
+        imports: Array.isArray(f.imports) ? f.imports : [],
+      }));
 
+      for (const dep of dependencies) {
+        const packageName = dep.packageName;
+        if (!packageName) continue;
+        usageByPackage[packageName] = normalizedFiles
+          .filter((file) =>
+            file.imports.some((imp) => {
+              const value = String(imp || "");
+              return value === packageName || value.startsWith(`${packageName}/`);
+            }),
+          )
+          .map((file) => file.filePath)
+          .filter(Boolean);
+      }
+
+      answer = formatDependencies(dependencies, usageByPackage);
+      sources = ["server/package.json", "client/package.json"];
+      navigationHelp = normalizeNavigation(
+        repository,
+        sources.map((file) => ({ title: "Dependency file", file })),
+      );
+      return { answer, sources, navigationHelp };
+    }
+
+    if (intent === "files") {
+      answer = formatFiles(repository, files);
+      sources = normalizePathList(
+        repository,
+        files
+        .map((f) => normalizeRepoPath(repository, f.filePath))
+        .filter(Boolean),
+      ).slice(0, 20);
+      navigationHelp = normalizeNavigation(
+        repository,
+        sources.slice(0, 8).map((file) => ({
+          title: path.basename(file),
+          file,
+        })),
+      );
+      return { answer, sources, navigationHelp };
+    }
+
+    if (intent === "tech_stack") {
+      answer = formatTechStack(repository, dependencies);
+      sources = ["server/package.json", "client/package.json"];
+      navigationHelp = normalizeNavigation(
+        repository,
+        sources.map((file) => ({ title: "Dependency file", file })),
+      );
+      return { answer, sources, navigationHelp };
+    }
+
+    if (intent === "entry_points") {
+      answer = formatEntryPoints(repository);
+      sources = normalizePathList(repository, (repository.entryPoints || [])
+        .map((e) => (typeof e === "string" ? e : e?.file))
+        .filter(Boolean));
+      navigationHelp = normalizeNavigation(
+        repository,
+        sources.map((file) => ({ title: "Entry point", file })),
+      );
+      return { answer, sources, navigationHelp };
+    }
+
+    if (intent === "modules") {
+      answer = formatModules(modules);
+      const moduleFiles = Object.values(modules || {})
+        .flat()
+        .map((f) => (typeof f === "string" ? f : f?.filePath))
+        .filter(Boolean)
+        .slice(0, 15);
+      sources = normalizePathList(repository, moduleFiles);
+      navigationHelp = normalizeNavigation(
+        repository,
+        moduleFiles.slice(0, 8).map((file) => ({ title: "Module file", file })),
+      );
+      return { answer, sources, navigationHelp };
+    }
+
+    if (intent === "onboarding") {
+      answer = formatOnboarding(analysis, repository);
+      sources = normalizePathList(repository, (repository.entryPoints || [])
+        .map((e) => (typeof e === "string" ? e : e?.file))
+        .filter(Boolean)
+        .slice(0, 8));
+      navigationHelp = normalizeNavigation(
+        repository,
+        sources.map((file) => ({ title: "Start here", file })),
+      );
+      return { answer, sources, navigationHelp };
+    }
+
+    if (intent === "critical_path") {
+      answer =
+        analysis?.criticalPathAnalysis?.trim() ||
+        "Critical path analysis is not available yet for this repository.";
+      return { answer, sources: [], navigationHelp: [] };
+    }
+
+    // General questions: structured context first, semantic chunks second.
+    const relevantChunks = await repoSearchTool(repositoryId, question);
     if (
-      lowerQuestion.includes("dependency") ||
-      lowerQuestion.includes("library") ||
-      lowerQuestion.includes("framework")
-    ) {
-      const dependencies = await dependencyTool(repositoryId);
-
-      context = `
-
-Dependencies:
-
-${clipForPrompt(dependencies, 5000)}
-`;
-    } else if (
-      lowerQuestion.includes("tech stack") ||
-      lowerQuestion.includes("technology stack") ||
-      lowerQuestion.includes("technologies") ||
-      lowerQuestion.includes("stack used") ||
-      lowerQuestion.includes("built with")
-    ) {
-      sources = ["package.json", "client/package.json", "server/package.json"];
-      navigationHelp = sources.map((file) => ({ title: "Dependency file", file }));
-
-      return {
-        answer: await formatTechStackAnswer(repositoryId),
-
-        sources,
-
-        navigationHelp,
-      };
-    }
-
-    // entry point related questions
-    else if (
-      lowerQuestion.includes("entry") ||
-      lowerQuestion.includes("start") ||
-      lowerQuestion.includes("bootstrap")
-    ) {
-      const entryPoints = await entryPointTool(repositoryId);
-
-      context = `
-
-Entry Points:
-
-${clipForPrompt(entryPoints, 4000)}
-`;
-
-      navigationHelp = entryPoints.map((entry) => ({
-        title: "Application Entry Point",
-
-        file: entry.file || entry,
-      }));
-    } else if (
-      lowerQuestion.includes("model") ||
-      lowerQuestion.includes("schema") ||
-      lowerQuestion.includes("collection") ||
-      lowerQuestion.includes("entity") ||
-      lowerQuestion.includes("entities")
-    ) {
-      const modelFiles = await findModelFiles(repositoryId);
-
-      sources = modelFiles.map((file) => file.filePath).filter(Boolean);
-
-      context = `
-
-Repository model/schema files:
-
-${clipForPrompt(modelFiles, 6000)}
-`;
-
-      navigationHelp = modelFiles.slice(0, 6).map((file) => ({
-        title: file.fileName,
-
-        file: file.filePath,
-      }));
-
-      return {
-        answer: formatModelAnswer(modelFiles),
-
-        sources,
-
-        navigationHelp,
-      };
-    } else if (
-      lowerQuestion.includes("module") ||
-      lowerQuestion.includes("feature") ||
-      lowerQuestion.includes("section")
-    ) {
-      const modules = await extractModules(repositoryId);
-
-      context = `
-
-Repository Modules:
-
-${clipForPrompt(modules, 5000)}
-`;
-
-      navigationHelp = Object.entries(modules)
-        .slice(0, 3)
-        .map(([moduleName, files]) => ({
-          title: moduleName,
-
-          file: files?.[0]?.filePath || "",
-        }));
-    }
-
-    // default semantic repo search
-    else {
-      const relevantChunks = await repoSearchTool(
-        repositoryId,
-
+      !isRepositoryRelevant({
         question,
-      );
-
-      sources = [...new Set(relevantChunks.map((item) => item.filePath))].slice(
-        0,
-        5,
-      );
-
-      context = relevantChunks
-        .map(
-          (item) => `
-
-FILE:
-${item.filePath}
-
-
-
-CODE CHUNK:
-${clipForPrompt(item.content)}
-`,
-        )
-        .join("\n\n");
-
-      navigationHelp = [
-        {
-          title: "Frontend Entry",
-
-          file: "client/src/main.jsx",
-        },
-
-        {
-          title: "Backend Entry",
-
-          file: "server/src/app.js",
-        },
-
-        {
-          title: "Authentication Logic",
-
-          file: "server/src/middlewares/auth.middleware.js",
-        },
-      ];
+        repository,
+        dependencies,
+        files,
+        modules,
+        relevantChunks,
+      })
+    ) {
+      return {
+        answer:
+          "I can help only with this repository. Please ask repository-related questions about architecture, files, modules, dependencies, flows, or specific code paths.",
+        sources: [],
+        navigationHelp: [],
+      };
     }
 
-    // final prompt
+    sources = normalizePathList(
+      repository,
+      [...new Set(relevantChunks.map((item) => item.filePath).filter(Boolean))],
+    ).slice(0, 8);
+
+    const structuredContext = `
+Repository: ${repository.repoName}
+Tech stack: ${JSON.stringify(repository.techStack || {}, null, 2)}
+Entry points: ${(repository.entryPoints || []).map((e) => (e?.file || e)).join(", ")}
+Top modules: ${Object.keys(modules || {}).join(", ")}
+Architecture summary: ${analysis?.architectureSummary || "N/A"}
+Critical path: ${analysis?.criticalPathAnalysis || "N/A"}
+Dependencies sample: ${(dependencies || []).slice(0, 20).map((d) => `${d.packageName}@${d.version}`).join(", ")}
+`;
+
+    const chunkContext = relevantChunks
+      .slice(0, 6)
+      .map((item) => `FILE: ${normalizeRepoPath(repository, item.filePath)}\nCODE: ${item.content}`)
+      .join("\n\n");
 
     const prompt = `
-You are a helpful repository chat assistant. Answer like ChatGPT: clear, conversational, and easy to scan.
+You are a repository intelligence assistant.
+Answer the user using the repository context below. Be precise and grounded.
+If evidence is insufficient, say: "I could not find enough repository evidence."
 
-Use ONLY the provided repository context. If the context is not enough, say exactly:
-"I could not find enough repository evidence."
+Rules:
+- Start with a direct answer.
+- Use short bullets only if needed.
+- Mention concrete file paths when available.
+- Keep response under 220 words.
 
-Response rules:
-- Start with a direct answer in 1-2 sentences.
-- Use short markdown bullets only when they improve readability.
-- Mention important file paths as inline code.
-- Keep the response under 220 words unless the user explicitly asks for depth.
-- Do not paste raw JSON, raw repository context, embeddings, metadata, or full code chunks.
-- Do not include labels like "Repository Context", "FILE", "CODE CHUNK", or "Provide".
-- If code is necessary, include at most 12 lines and explain why it matters.
-- Avoid repeating file names excessively.
+Recent chat context (oldest to latest):
+${(chatHistory || [])
+  .slice(-8)
+  .map((msg) => `${msg.role}: ${msg.content}`)
+  .join("\n") || "No previous messages."}
 
-Repository context:
+Structured repository context:
+${structuredContext}
 
-${context}
+Semantic snippets:
+${chunkContext || "No semantic snippets available."}
 
 User question:
 ${question}
 `;
 
-    // generate grounded answer
+    answer = await generateResponse(prompt);
 
-    const response = await generateResponse(prompt);
+    navigationHelp = normalizeNavigation(
+      repository,
+      sources.slice(0, 5).map((file) => ({
+        title: "Relevant file",
+        file,
+      })),
+    );
 
-    return {
-      answer: response,
-
-      sources,
-
-      navigationHelp,
-    };
+    return { answer, sources, navigationHelp };
   } catch (error) {
     console.log("Repo Agent Error:", error);
-
     throw error;
   }
 };

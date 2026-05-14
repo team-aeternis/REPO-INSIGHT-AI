@@ -24,7 +24,10 @@ async (
                ?.filePath,
 
          content:
-            item.chunk.chunkText
+            item.chunk.chunkText,
+
+         score:
+            item.score
       })
    );
 };
