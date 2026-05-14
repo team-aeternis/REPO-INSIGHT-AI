@@ -1,3 +1,4 @@
+import { chatAgent } from "../services/agents/chatAgent.js";
 import { repoAgent }
 from "../services/agents/repoAgent.js";
 
@@ -15,7 +16,7 @@ async (req, res, next) => {
       } = req.body;
 
       const response =
-         await repoAgent(
+         await chatAgent(
 
             repositoryId,
 

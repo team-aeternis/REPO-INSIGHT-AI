@@ -4,6 +4,7 @@ import DependencyModel from "../../models/Dependency.model.js";
 import EmbeddingChunkModel from "../../models/EmbeddingChunk.model.js";
 import AnalyzeResultModel from "../../models/AnalyzeResult.model.js";
 import { generateEmbeddings } from "../embeddings/generateEmbeddings.js";
+import { extractModules } from "../parser/extractModules.js";
 import FileModel from "../../models/File.model.js";
 import fs from "fs";
 import path from "path";
@@ -19,6 +20,15 @@ import { walkFiles } from "../parser/fileWalker.js";
 
 export const getAllRepositories = async () => {
   try {
+    const repositories = await RepositoryModel.find({})
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return {
+      success: true,
+      data: repositories,
+      status: 200,
+    };
   } catch (error) {
     throw new ExpressError(error.statusCode || 500, error.message);
   }
@@ -26,6 +36,21 @@ export const getAllRepositories = async () => {
 
 export const getRepositoryById = async (id) => {
   try {
+    const repository = await RepositoryModel.findById(id).lean();
+    if (!repository) {
+      throw new ExpressError(404, "Repository not found");
+    }
+
+    const analysis = await AnalyzeResultModel.findOne({ repositoryId: id }).lean();
+
+    return {
+      success: true,
+      data: {
+        repository,
+        analysis,
+      },
+      status: 200,
+    };
   } catch (error) {
     throw new ExpressError(error.statusCode || 500, error.message);
   }
@@ -151,15 +176,28 @@ export const createRepository = async (repositoryData) => {
 
     const criticalPath = await criticalPathAnalysis(repositoryDoc._id);
 
+    const module = await extractModules(repositoryDoc._id);
+
     analyzeResult.criticalPathAnalysis = criticalPath;
+    analyzeResult.modules = module;
     await analyzeResult.save();
 
     repositoryDoc.status = "completed";
 
     await repositoryDoc.save();
+
+    const dashboardPayload = {
+      repository: repositoryDoc.toObject(),
+      analysis: analyzeResult.toObject(),
+    };
+
     return {
       success: true,
-      data: repositoryDoc.repoName,
+      data: {
+        repoName: repositoryDoc.repoName,
+        repositoryId: repositoryDoc._id,
+        dashboard: dashboardPayload,
+      },
       message: "Repository submitted successfully",
       status: 200,
     };
