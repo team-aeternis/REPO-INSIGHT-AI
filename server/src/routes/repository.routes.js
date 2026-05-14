@@ -1,7 +1,7 @@
 import express from "express";
 const router = express.Router();
 
-import * as RepositoryController from "../controllers/Repository.controller.js";
+import * as RepositoryController from "../controllers/repository.controller.js";
 
 router.get("/", RepositoryController.getAllRepositories);
 router.get("/:id", RepositoryController.getRepositoryById);
