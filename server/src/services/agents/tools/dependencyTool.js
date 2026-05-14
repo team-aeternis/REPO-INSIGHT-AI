@@ -15,10 +15,13 @@ async (repositoryId) => {
       dep => ({
 
          name:
-            dep.name,
+            dep.packageName,
 
          version:
             dep.version,
+
+         type:
+            dep.type,
 
          ecosystem:
             dep.ecosystem

@@ -1,0 +1,22 @@
+[
+  {
+    "question": "What is the architecture summary of this repository?",
+    "expectedAnswer": "Should describe backend/frontend structure and key execution flow."
+  },
+  {
+    "question": "Where should a new developer start in this repository?",
+    "expectedAnswer": "Should point to entry points and important files for onboarding."
+  },
+  {
+    "question": "What dependencies are used in this repository?",
+    "expectedAnswer": "Should list concrete dependency names and versions from indexed data."
+  },
+  {
+    "question": "What modules are detected in this repository?",
+    "expectedAnswer": "Should mention extracted module groups and relevant file mapping."
+  },
+  {
+    "question": "What is the critical path of this repository?",
+    "expectedAnswer": "Should explain authentication/API/database execution path grounded in repository files."
+  }
+]

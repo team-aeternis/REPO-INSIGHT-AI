@@ -228,15 +228,47 @@ function FilePills({ title, files, onCopy }) {
   );
 }
 
+function BlockingLoader({ message }) {
+  return (
+    <>
+      <div className="fixed top-0 left-0 right-0 z-[2100] h-1 overflow-hidden bg-gray-200/60 pointer-events-auto">
+        <div className="h-full w-full animate-pulse bg-gray-900" />
+      </div>
+      <div className="fixed inset-0 z-[2090] flex items-center justify-center bg-black/40 backdrop-blur-[1px] pointer-events-auto">
+        <div className="rounded-xl bg-white px-6 py-5 shadow-xl border border-gray-200 flex items-center gap-3">
+          <svg className="h-5 w-5 animate-spin text-gray-900" viewBox="0 0 24 24">
+            <circle
+              className="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+              fill="none"
+            />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+          </svg>
+          <p className="text-sm font-medium text-gray-800">{message}</p>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function ExplorePage() {
   const [repoUrl, setRepoUrl] = useState("");
   const [phaseIndex, setPhaseIndex] = useState(0);
   const [analyzing, setAnalyzing] = useState(false);
   const [dashboard, setDashboard] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [chatSessionId, setChatSessionId] = useState("");
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
   const textareaRef = useRef(null);
+  const isBlocking = analyzing || chatLoading;
+  const blockingMessage = analyzing
+    ? PHASES[phaseIndex] || "Analyzing repository..."
+    : "Waiting for server response...";
 
   useEffect(() => {
     if (!analyzing) return;
@@ -292,6 +324,7 @@ export default function ExplorePage() {
           },
     );
     setMessages([]);
+    setChatSessionId("");
     setChatInput("");
     toast.success(response?.message || "Repository analyzed");
   };
@@ -310,7 +343,11 @@ export default function ExplorePage() {
     setChatInput("");
     setChatLoading(true);
 
-    const response = await askRepoQuestion({ repositoryId, question });
+    const response = await askRepoQuestion({
+      repositoryId,
+      question,
+      sessionId: chatSessionId || undefined,
+    });
     setChatLoading(false);
 
     if (!response?.success) {
@@ -319,6 +356,9 @@ export default function ExplorePage() {
     }
 
     const data = response?.data || {};
+    if (data?.sessionId) {
+      setChatSessionId(data.sessionId);
+    }
     setMessages((prev) => [
       ...prev,
       {
@@ -349,8 +389,10 @@ export default function ExplorePage() {
   // ── No dashboard yet: landing / URL-submit view ──────────────────────────
   if (!dashboard) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-full bg-white px-4 py-16">
-        <div className="w-full max-w-2xl flex flex-col items-center gap-6">
+      <>
+        {isBlocking && <BlockingLoader message={blockingMessage} />}
+        <div className="flex flex-col items-center justify-center min-h-full bg-white px-4 py-16">
+          <div className="w-full max-w-2xl flex flex-col items-center gap-6">
           {/* Heading */}
           <div className="text-center space-y-2">
             <h1 className="text-3xl font-semibold text-gray-900 tracking-tight">
@@ -433,16 +475,21 @@ export default function ExplorePage() {
               https://github.com/vercel/next.js
             </span>
           </p>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   // ── Dashboard: chat view ─────────────────────────────────────────────────
   return (
-    <div className="flex flex-col h-full bg-white">
+    <>
+      {isBlocking && <BlockingLoader message={blockingMessage} />}
+      <div className="flex flex-col h-full bg-white">
       {/* Message thread */}
-      <div className="flex-1 overflow-y-auto px-4 py-6">
+      <div
+        className="flex-1 overflow-y-auto px-4 py-6"
+      >
         <div className="mx-auto w-full max-w-2xl space-y-6">
           {/* Empty state */}
           {messages.length === 0 && (
@@ -700,6 +747,7 @@ export default function ExplorePage() {
           </p>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 }

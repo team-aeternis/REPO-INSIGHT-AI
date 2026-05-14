@@ -60,7 +60,7 @@ Repository Name:
 ${repository.repoName}
 
 Dependencies:
-${dependencies.map((dep) => dep.name).join(", ")}
+${dependencies.map((dep) => dep.packageName).filter(Boolean).join(", ")}
 
 Repository Modules:
 

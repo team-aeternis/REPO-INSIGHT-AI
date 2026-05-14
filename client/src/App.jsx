@@ -7,6 +7,7 @@ import Anonymous from "./pages/Anonymous";
 import WelcomePage from "./pages/WelcomePage";
 import { ToastContainer } from "react-toastify";
 import ExplorePage from "./pages/ExplorePage";
+import AdminPage from "./pages/AdminPage";
 import { useSelector } from "react-redux";
 
 function App() {
@@ -24,6 +25,7 @@ function App() {
               element={<WelcomePage username={user?.username} />}
             />
             <Route path="explore" element={<ExplorePage />} />
+            <Route path="admin" element={<AdminPage />} />
           </Route>
 
           <Route path="/auth">
