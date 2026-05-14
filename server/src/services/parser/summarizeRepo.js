@@ -8,6 +8,9 @@ import { similaritySearch } from "../vector/similaritySearch.js";
 
 import { generateResponse } from "../llm/providers/openai.js";
 
+import { extractModules } from "./extractModules.js";
+
+
 export const summarizeRepo = async (repositoryId) => {
   try {
     // repository metadata
@@ -21,6 +24,10 @@ export const summarizeRepo = async (repositoryId) => {
     const files = await FileModel.find({
       repositoryId,
     });
+
+    // module extraction
+
+    const modules = await extractModules(repositoryId);
 
     // semantic retrieval
 
@@ -42,6 +49,9 @@ export const summarizeRepo = async (repositoryId) => {
       "database connection",
     );
 
+    const entryPoints =
+   repository.entryPoints || [];
+
     // build semantic context
 
     const context = `
@@ -52,6 +62,10 @@ ${repository.repoName}
 Dependencies:
 ${dependencies.map((dep) => dep.name).join(", ")}
 
+Repository Modules:
+
+${JSON.stringify(modules, null, 2)}
+
 Architecture Chunks:
 ${architectureChunks.map((item) => item.chunk.chunkText).join("\n\n")}
 
@@ -60,6 +74,10 @@ ${authChunks.map((item) => item.chunk.chunkText).join("\n\n")}
 
 Database Chunks:
 ${databaseChunks.map((item) => item.chunk.chunkText).join("\n\n")}
+
+Entry Points:
+
+${entryPoints.map((entry) => entry.file || entry).join("\n")}
 `;
 
     // prompt
@@ -75,8 +93,19 @@ Analyze this repository and generate:
 3. Important modules
 4. Authentication flow
 5. Database flow
-6. Recommended starting files
-7. Developer onboarding guidance
+6. Critical execution paths
+7. Recommended starting files
+8. Developer onboarding guidance
+
+Explain the major repository modules and their responsibilities.
+
+Rules:
+- Do NOT assume technologies not present in repository
+- Mention grounded file references when possible
+- Use concise markdown headings
+- Explain repository modules clearly
+- Mention important entry points
+- Include critical execution paths
 
 Repository Context:
 
