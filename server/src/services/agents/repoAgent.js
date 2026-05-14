@@ -76,6 +76,24 @@ const isRepositoryRelevant = ({
 }) => {
   const tokens = tokenize(question);
   if (!tokens.length) return false;
+  const q = String(question || "").toLowerCase();
+
+  const genericRepoIntent =
+    includesAny(q, ["repo", "repository", "codebase"]) &&
+    includesAny(q, [
+      "summary",
+      "overview",
+      "purpose",
+      "architecture",
+      "module",
+      "dependency",
+      "entry point",
+      "flow",
+      "start",
+      "onboarding",
+      "files",
+      "tech stack",
+    ]);
 
   const repoSignals = buildRepoSignalSet(repository, dependencies, files, modules);
   const overlap = tokens.filter((t) => repoSignals.has(t)).length;
@@ -88,7 +106,7 @@ const isRepositoryRelevant = ({
   );
 
   // Accept if we have either lexical overlap with repo index or strong semantic retrieval.
-  return overlap >= 1 || bestScore >= 0.22;
+  return genericRepoIntent || overlap >= 1 || bestScore >= 0.22;
 };
 
 const classifyIntent = (question = "") => {
@@ -99,9 +117,19 @@ const classifyIntent = (question = "") => {
       "architecture",
       "high level design",
       "repo summary",
+      "summary of this repo",
+      "summary of this repository",
+      "purpose of this repo",
+      "purpose of this repository",
+      "repo overview",
+      "repository overview",
       "system design",
       "overall flow",
     ])
+    || (
+      includesAny(q, ["repo", "repository", "codebase"]) &&
+      includesAny(q, ["summary", "purpose", "overview"])
+    )
   ) {
     return "architecture";
   }

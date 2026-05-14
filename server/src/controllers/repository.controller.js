@@ -49,6 +49,30 @@ export const getRepositoryById = async (req, res, next) => {
     next(error);
   }
 };
+export const resolveRepositoryByUrl = async (req, res, next) => {
+  try {
+    const { url } = req.query;
+
+    const response = await RepositoryService.resolveRepositoryByUrl(url);
+
+    if (response.success) {
+      return successResponse(
+        res,
+        response.data,
+        "Repository resolved successfully",
+        response.status,
+      );
+    }
+    return errorResponse(
+      res,
+      response.error,
+      "Failed to resolve repository",
+      response.status,
+    );
+  } catch (error) {
+    next(error);
+  }
+};
 export const createRepository = async (req, res, next) => {
   try {
 

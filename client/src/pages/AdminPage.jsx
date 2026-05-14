@@ -19,10 +19,30 @@ export default function AdminPage() {
   const [evaluation, setEvaluation] = useState(null);
   const [observability, setObservability] = useState(null);
   const [chatSummary, setChatSummary] = useState(null);
-  const [repoIdForEval, setRepoIdForEval] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [resolvedRepo, setResolvedRepo] = useState(null);
   const [repoIdForObs, setRepoIdForObs] = useState("");
-  const [repoIdForChat, setRepoIdForChat] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const resolveRepository = async () => {
+    if (!repoUrl.trim()) {
+      toast.info("Enter repository URL first");
+      return null;
+    }
+    try {
+      setLoading(true);
+      const res = await API.get(`/api/repo/resolve?url=${encodeURIComponent(repoUrl.trim())}`);
+      const repo = res?.data?.data || null;
+      setResolvedRepo(repo);
+      return repo;
+    } catch {
+      toast.error("Repository URL not found. Analyze it first.");
+      setResolvedRepo(null);
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const fetchHealth = async () => {
     try {
@@ -38,13 +58,12 @@ export default function AdminPage() {
   };
 
   const fetchEvaluation = async () => {
-    if (!repoIdForEval.trim()) {
-      toast.info("Enter repositoryId for evaluation summary");
-      return;
-    }
+    let repo = resolvedRepo;
+    if (!repo?._id) repo = await resolveRepository();
+    if (!repo?._id) return;
     try {
       setLoading(true);
-      const res = await API.get(`/api/evaluation/summary/${repoIdForEval.trim()}`);
+      const res = await API.get(`/api/evaluation/summary/${repo._id}`);
       setEvaluation(res?.data?.data || null);
     } catch {
       toast.error("Failed to fetch evaluation summary");
@@ -54,13 +73,12 @@ export default function AdminPage() {
   };
 
   const runGoldenEvaluation = async () => {
-    if (!repoIdForEval.trim()) {
-      toast.info("Enter repositoryId to run golden evaluation");
-      return;
-    }
+    let repo = resolvedRepo;
+    if (!repo?._id) repo = await resolveRepository();
+    if (!repo?._id) return;
     try {
       setLoading(true);
-      await API.post(`/api/evaluation/run/${repoIdForEval.trim()}`);
+      await API.post(`/api/evaluation/run/${repo._id}`);
       toast.success("Golden evaluation completed");
       await fetchEvaluation();
     } catch {
@@ -73,8 +91,9 @@ export default function AdminPage() {
   const fetchObservability = async () => {
     try {
       setLoading(true);
-      const query = repoIdForObs.trim()
-        ? `?repositoryId=${encodeURIComponent(repoIdForObs.trim())}`
+      const repoId = repoIdForObs.trim() || resolvedRepo?._id || "";
+      const query = repoId
+        ? `?repositoryId=${encodeURIComponent(repoId)}`
         : "";
       const res = await API.get(`/api/observability/summary${query}`);
       setObservability(res?.data?.data || null);
@@ -86,13 +105,12 @@ export default function AdminPage() {
   };
 
   const fetchChatSummary = async () => {
-    if (!repoIdForChat.trim()) {
-      toast.info("Enter repositoryId for chat sessions");
-      return;
-    }
+    let repo = resolvedRepo;
+    if (!repo?._id) repo = await resolveRepository();
+    if (!repo?._id) return;
     try {
       setLoading(true);
-      const res = await API.get(`/api/chat/sessions/${repoIdForChat.trim()}`);
+      const res = await API.get(`/api/chat/sessions/${repo._id}`);
       setChatSummary(res?.data?.data || null);
     } catch {
       toast.error("Failed to fetch chat sessions summary");
@@ -126,6 +144,30 @@ export default function AdminPage() {
           Refresh
         </button>
       </div>
+      <Card title="Repository Resolver">
+        <div className="grid gap-2 md:grid-cols-[1fr_auto]">
+          <input
+            value={repoUrl}
+            onChange={(e) => setRepoUrl(e.target.value)}
+            placeholder="Enter analyzed GitHub repo URL (e.g. https://github.com/org/repo)"
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
+          />
+          <button
+            type="button"
+            onClick={resolveRepository}
+            disabled={loading}
+            className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+          >
+            Resolve Repository
+          </button>
+        </div>
+        <p className="mt-2 text-xs text-slate-600">
+          Resolved ID: {resolvedRepo?._id || "No data found"}
+        </p>
+        <p className="text-xs text-slate-600">
+          Repo name: {resolvedRepo?.repoName || "No data found"}
+        </p>
+      </Card>
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card title="Health Summary">
@@ -158,7 +200,7 @@ export default function AdminPage() {
             <input
               value={repoIdForObs}
               onChange={(e) => setRepoIdForObs(e.target.value)}
-              placeholder="Optional repositoryId filter"
+              placeholder="Optional repositoryId override filter"
               className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
             />
             <button
@@ -197,12 +239,9 @@ export default function AdminPage() {
 
       <Card title="Evaluation Summary by Repository">
         <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-          <input
-            value={repoIdForEval}
-            onChange={(e) => setRepoIdForEval(e.target.value)}
-            placeholder="Enter repositoryId"
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-          />
+          <p className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">
+            Using resolved repository URL
+          </p>
           <button
             type="button"
             onClick={fetchEvaluation}
@@ -265,12 +304,9 @@ export default function AdminPage() {
 
       <Card title="Chat Session Summary by Repository">
         <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-          <input
-            value={repoIdForChat}
-            onChange={(e) => setRepoIdForChat(e.target.value)}
-            placeholder="Enter repositoryId"
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-500"
-          />
+          <p className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">
+            Using resolved repository URL
+          </p>
           <button
             type="button"
             onClick={fetchChatSummary}
