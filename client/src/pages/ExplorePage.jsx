@@ -20,6 +20,7 @@ const SUGGESTIONS = [
 ];
 
 const toList = (value) => (Array.isArray(value) ? value : value ? [value] : []);
+
 const cleanPath = (raw = "") => {
   if (typeof raw !== "string") {
     raw = raw?.filePath || raw?.file || "";
@@ -41,22 +42,189 @@ const cleanPath = (raw = "") => {
 
   return raw;
 };
-const Markdown = ({ text }) => (
-  <div className="prose prose-slate max-w-none prose-sm">
-    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+
+const stringifyAnswer = (value) => {
+  if (typeof value === "string") return value;
+  if (value?.answer) return stringifyAnswer(value.answer);
+  if (value == null) return "";
+  return JSON.stringify(value, null, 2);
+};
+
+const summarizeStructuredDump = (value) => {
+  const items = Array.isArray(value)
+    ? value.slice(0, 5)
+    : Object.entries(value || {})
+        .slice(0, 6)
+        .map(([key, val]) => ({
+          key,
+          value:
+            typeof val === "string"
+              ? val
+              : Array.isArray(val)
+                ? `${val.length} items`
+                : val && typeof val === "object"
+                  ? Object.keys(val).slice(0, 4).join(", ")
+                  : String(val),
+        }));
+
+  const bullets = items
+    .map((item) => {
+      if (item?.key) return `- **${item.key}:** ${String(item.value).slice(0, 140)}`;
+      if (typeof item === "string") return `- ${item.slice(0, 140)}`;
+      return `- ${JSON.stringify(item).slice(0, 140)}`;
+    })
+    .join("\n");
+
+  return `I received structured repository data instead of a polished answer. Here are the useful parts:\n\n${bullets}`;
+};
+
+const sanitizeAssistantAnswer = (value) => {
+  const raw = stringifyAnswer(value).trim();
+  if (!raw) return "No answer returned.";
+
+  try {
+    if (/^[{[]/.test(raw)) {
+      return summarizeStructuredDump(JSON.parse(raw));
+    }
+  } catch {
+    // Fall through to text cleanup when the response only looks like JSON.
+  }
+
+  const cleaned = raw
+    .replace(/\r\n/g, "\n")
+    .replace(/```(?:json)?\n[\s\S]{1200,}```/gi, "Large raw data omitted for readability.")
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trim();
+      return !/^(repository context|code chunk|file|provide|user question):?$/i.test(
+        trimmed,
+      );
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  if (cleaned.length <= 3600) return cleaned;
+
+  const trimmed = cleaned.slice(0, 3400);
+  const lastStop = Math.max(
+    trimmed.lastIndexOf(". "),
+    trimmed.lastIndexOf("\n- "),
+    trimmed.lastIndexOf("\n\n"),
+  );
+
+  return `${trimmed.slice(0, lastStop > 2200 ? lastStop + 1 : 3400).trim()}\n\n_Response trimmed for readability. Ask for more detail on a specific file or flow._`;
+};
+
+const Markdown = ({ text, compact = false }) => (
+  <div
+    className={`max-w-none text-gray-800 ${
+      compact ? "text-xs leading-5" : "text-[15px] leading-7"
+    }`}
+  >
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
+        ul: ({ children }) => (
+          <ul className="mb-3 list-disc space-y-1 pl-5 last:mb-0">
+            {children}
+          </ul>
+        ),
+        ol: ({ children }) => (
+          <ol className="mb-3 list-decimal space-y-1 pl-5 last:mb-0">
+            {children}
+          </ol>
+        ),
+        li: ({ children }) => <li className="pl-1">{children}</li>,
+        code: ({ inline, children }) =>
+          inline ? (
+            <code className="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-[0.9em] text-gray-900">
+              {children}
+            </code>
+          ) : (
+            <code className="block overflow-x-auto whitespace-pre rounded-lg bg-gray-950 p-3 font-mono text-xs leading-5 text-gray-100">
+              {children}
+            </code>
+          ),
+        pre: ({ children }) => (
+          <pre className="mb-3 max-h-72 overflow-auto rounded-lg last:mb-0">
+            {children}
+          </pre>
+        ),
+        a: ({ children, href }) => (
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-blue-600 underline underline-offset-2 hover:text-blue-700"
+          >
+            {children}
+          </a>
+        ),
+        table: ({ children }) => (
+          <div className="mb-3 overflow-x-auto rounded-lg border border-gray-200">
+            <table className="min-w-full divide-y divide-gray-200 text-sm">
+              {children}
+            </table>
+          </div>
+        ),
+        th: ({ children }) => (
+          <th className="bg-gray-50 px-3 py-2 text-left text-xs font-semibold uppercase text-gray-500">
+            {children}
+          </th>
+        ),
+        td: ({ children }) => (
+          <td className="border-t border-gray-100 px-3 py-2 align-top">
+            {children}
+          </td>
+        ),
+      }}
+    >
       {text || "No data available yet."}
     </ReactMarkdown>
   </div>
 );
 
-function InfoCard({ title, children }) {
+function InfoCard({ title, children, subtle = false }) {
   return (
-    <section className="rounded-xl border border-gray-200 bg-gray-50 p-4 mt-2">
+    <section
+      className={`mt-2 rounded-xl border p-4 ${
+        subtle ? "border-gray-200 bg-white" : "border-gray-200 bg-gray-50"
+      }`}
+    >
       <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
         {title}
       </h3>
       {children}
     </section>
+  );
+}
+
+function FilePills({ title, files, onCopy }) {
+  const uniqueFiles = [...new Set(toList(files).map(cleanPath).filter(Boolean))];
+
+  if (uniqueFiles.length === 0) return null;
+
+  return (
+    <details className="mt-3 rounded-xl border border-gray-200 bg-gray-50">
+      <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-gray-600 hover:text-gray-900">
+        {title} ({uniqueFiles.length})
+      </summary>
+      <div className="flex flex-wrap gap-2 border-t border-gray-200 px-3 py-3">
+        {uniqueFiles.map((file) => (
+          <button
+            key={file}
+            type="button"
+            onClick={() => onCopy(file)}
+            title="Copy file path"
+            className="max-w-full truncate rounded-full border border-gray-200 bg-white px-3 py-1.5 font-mono text-xs text-gray-700 hover:border-gray-300 hover:bg-gray-100"
+          >
+            {file}
+          </button>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -68,7 +236,6 @@ export default function ExplorePage() {
   const [messages, setMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
-  const chatRef = useRef(null);
   const textareaRef = useRef(null);
 
   useEffect(() => {
@@ -78,11 +245,6 @@ export default function ExplorePage() {
     }, 1200);
     return () => clearInterval(id);
   }, [analyzing]);
-
-  useEffect(() => {
-    if (!chatRef.current) return;
-    chatRef.current.scrollTop = chatRef.current.scrollHeight;
-  }, [messages, chatLoading]);
 
   const repository = dashboard?.repository || {};
   const analysis = dashboard?.analysis || {};
@@ -161,7 +323,7 @@ export default function ExplorePage() {
       ...prev,
       {
         role: "assistant",
-        text: data?.answer || "No answer returned.",
+        text: sanitizeAssistantAnswer(data?.answer || data),
         sources: toList(data?.sources).map(cleanPath).filter(Boolean),
         navigationHelp: toList(data?.navigationHelp),
       },
@@ -280,7 +442,7 @@ export default function ExplorePage() {
   return (
     <div className="flex flex-col h-full bg-white">
       {/* Message thread */}
-      <div ref={chatRef} className="flex-1 overflow-y-auto px-4 py-6">
+      <div className="flex-1 overflow-y-auto px-4 py-6">
         <div className="mx-auto w-full max-w-2xl space-y-6">
           {/* Empty state */}
           {messages.length === 0 && (
@@ -300,7 +462,7 @@ export default function ExplorePage() {
               {msg.role === "user" ? (
                 // User bubble – right-aligned
                 <div className="flex justify-end">
-                  <div className="max-w-[80%] rounded-2xl bg-gray-100 px-4 py-3 text-sm text-gray-800">
+                  <div className="max-w-[80%] rounded-2xl bg-gray-100 px-4 py-3 text-sm leading-6 text-gray-800">
                     {msg.text}
                   </div>
                 </div>
@@ -317,44 +479,23 @@ export default function ExplorePage() {
                         <path d="M12 2a10 10 0 100 20A10 10 0 0012 2zm0 3a1.5 1.5 0 110 3 1.5 1.5 0 010-3zm0 5c1.1 0 2 .9 2 2v5a1 1 0 11-2 0v-4H9a1 1 0 110-2h3z" />
                       </svg>
                     </div>
-                    <div className="flex-1 text-sm text-gray-800">
+                    <div className="min-w-0 flex-1">
                       <Markdown text={msg.text} />
                     </div>
                   </div>
 
-                  {msg.sources?.length > 0 && (
-                    <InfoCard title="Related Files">
-                      <ul className="space-y-1">
-                        {msg.sources.map((source) => (
-                          <li
-                            key={source}
-                            className="flex items-center justify-between gap-2 text-xs text-gray-700"
-                          >
-                            <span className="truncate font-mono">{source}</span>
-                            <button
-                              type="button"
-                              onClick={() => copyPath(source)}
-                              className="text-blue-600 hover:underline flex-shrink-0"
-                            >
-                              Copy
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    </InfoCard>
-                  )}
-
-                  {msg.navigationHelp?.length > 0 && (
-                    <InfoCard title="Suggested Starting Points">
-                      <ol className="list-decimal list-inside space-y-1 text-xs text-gray-700">
-                        {msg.navigationHelp.map((item, i) => (
-                          <li key={`${item.file}-${i}`}>
-                            {cleanPath(item.file || "")}
-                          </li>
-                        ))}
-                      </ol>
-                    </InfoCard>
-                  )}
+                  <div className="ml-10">
+                    <FilePills
+                      title="Related files"
+                      files={msg.sources}
+                      onCopy={copyPath}
+                    />
+                    <FilePills
+                      title="Suggested starting points"
+                      files={msg.navigationHelp}
+                      onCopy={copyPath}
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -389,109 +530,111 @@ export default function ExplorePage() {
             </div>
           )}
 
-          {/* Repository Analysis Details (collapsible) */}
-          <details className="rounded-xl border border-gray-200 overflow-hidden">
-            <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 select-none">
-              Repository Analysis Details
-            </summary>
-            <div className="p-4 space-y-4 bg-white">
-              <InfoCard title="Architecture Summary">
-                <Markdown text={analysis?.architectureSummary} />
-              </InfoCard>
-              <InfoCard title="Onboarding Guidance">
-                <Markdown
-                  text={
-                    analysis?.onboardingGuide ||
-                    "Start with entry points, then follow critical paths."
-                  }
-                />
-              </InfoCard>
-              <InfoCard title="Critical Path Analysis">
-                <Markdown text={analysis?.criticalPathAnalysis} />
-              </InfoCard>
-              <InfoCard title="Tech Stack">
-                {[
-                  ["Frontend", repository?.techStack?.frontend],
-                  ["Backend", repository?.techStack?.backend],
-                  ["Database", repository?.techStack?.database],
-                  ["Major Libraries", repository?.techStack?.styling],
-                ].map(([label, val]) => (
-                  <p key={label} className="text-xs text-gray-700 mb-1">
-                    <span className="font-medium">{label}:</span>{" "}
-                    {toList(val).join(", ") || "Not detected"}
-                  </p>
-                ))}
-              </InfoCard>
-              <InfoCard title="Entry Points">
-                <ul className="space-y-1">
-                  {entryPoints.length === 0 && (
-                    <li className="text-xs text-gray-400">
-                      No entry points detected.
-                    </li>
-                  )}
-                  {entryPoints.map((entry) => (
-                    <li
-                      key={entry.file}
-                      className="flex justify-between gap-2 text-xs text-gray-700"
-                    >
-                      <span className="truncate font-mono">
-                        {entry.file}
-                        {entry.framework ? ` (${entry.framework})` : ""}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => copyPath(entry.file)}
-                        className="text-blue-600 hover:underline flex-shrink-0"
-                      >
-                        Copy
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </InfoCard>
-              <InfoCard title="Modules">
-                <div className="space-y-2">
-                  {Object.keys(modules).length === 0 && (
-                    <p className="text-xs text-gray-400">
-                      No modules extracted yet.
+          {messages.length === 0 && (
+            <details className="rounded-xl border border-gray-200 overflow-hidden">
+              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 select-none">
+                Repository overview
+              </summary>
+              <div className="p-4 space-y-4 bg-white">
+                <InfoCard title="Architecture Summary">
+                  <Markdown text={analysis?.architectureSummary} compact />
+                </InfoCard>
+                <InfoCard title="Onboarding Guidance">
+                  <Markdown
+                    text={
+                      analysis?.onboardingGuide ||
+                      "Start with entry points, then follow critical paths."
+                    }
+                    compact
+                  />
+                </InfoCard>
+                <InfoCard title="Critical Path Analysis">
+                  <Markdown text={analysis?.criticalPathAnalysis} compact />
+                </InfoCard>
+                <InfoCard title="Tech Stack">
+                  {[
+                    ["Frontend", repository?.techStack?.frontend],
+                    ["Backend", repository?.techStack?.backend],
+                    ["Database", repository?.techStack?.database],
+                    ["Major Libraries", repository?.techStack?.styling],
+                  ].map(([label, val]) => (
+                    <p key={label} className="text-xs text-gray-700 mb-1">
+                      <span className="font-medium">{label}:</span>{" "}
+                      {toList(val).join(", ") || "Not detected"}
                     </p>
-                  )}
-                  {Object.entries(modules).map(([name, files]) => (
-                    <details
-                      key={name}
-                      className="rounded-lg border border-gray-200 bg-gray-50 p-2"
-                    >
-                      <summary className="cursor-pointer text-xs font-medium text-gray-700 select-none">
-                        {name}
-                      </summary>
-                      <ul className="mt-2 space-y-1">
-                        {toList(files).map((file) => {
-                          const normalized = cleanPath(file);
-                          return (
-                            <li
-                              key={`${name}-${normalized}`}
-                              className="flex justify-between gap-2 text-xs text-gray-600"
-                            >
-                              <span className="truncate font-mono">
-                                {normalized}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => copyPath(normalized)}
-                                className="text-blue-600 hover:underline flex-shrink-0"
-                              >
-                                Copy
-                              </button>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </details>
                   ))}
-                </div>
-              </InfoCard>
-            </div>
-          </details>
+                </InfoCard>
+                <InfoCard title="Entry Points">
+                  <ul className="space-y-1">
+                    {entryPoints.length === 0 && (
+                      <li className="text-xs text-gray-400">
+                        No entry points detected.
+                      </li>
+                    )}
+                    {entryPoints.map((entry) => (
+                      <li
+                        key={entry.file}
+                        className="flex justify-between gap-2 text-xs text-gray-700"
+                      >
+                        <span className="truncate font-mono">
+                          {entry.file}
+                          {entry.framework ? ` (${entry.framework})` : ""}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => copyPath(entry.file)}
+                          className="text-blue-600 hover:underline flex-shrink-0"
+                        >
+                          Copy
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </InfoCard>
+                <InfoCard title="Modules">
+                  <div className="space-y-2">
+                    {Object.keys(modules).length === 0 && (
+                      <p className="text-xs text-gray-400">
+                        No modules extracted yet.
+                      </p>
+                    )}
+                    {Object.entries(modules).map(([name, files]) => (
+                      <details
+                        key={name}
+                        className="rounded-lg border border-gray-200 bg-gray-50 p-2"
+                      >
+                        <summary className="cursor-pointer text-xs font-medium text-gray-700 select-none">
+                          {name}
+                        </summary>
+                        <ul className="mt-2 space-y-1">
+                          {toList(files).map((file) => {
+                            const normalized = cleanPath(file);
+                            return (
+                              <li
+                                key={`${name}-${normalized}`}
+                                className="flex justify-between gap-2 text-xs text-gray-600"
+                              >
+                                <span className="truncate font-mono">
+                                  {normalized}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => copyPath(normalized)}
+                                  className="text-blue-600 hover:underline flex-shrink-0"
+                                >
+                                  Copy
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </details>
+                    ))}
+                  </div>
+                </InfoCard>
+              </div>
+            </details>
+          )}
         </div>
       </div>
 
