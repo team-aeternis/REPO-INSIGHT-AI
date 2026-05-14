@@ -12,6 +12,7 @@ import { extractDependencies } from "../parser/extractDependencies.js";
 import { detectEntryPoints } from "../parser/detectEntryPoints.js";
 import { extractImports } from "../parser/extractImports.js";
 import { summarizeRepo } from "../parser/summarizeRepo.js";
+import { criticalPathAnalysis } from "../analysis/criticalPathAnalysis.js";
 
 import { cloneRepo } from "../github/cloneRepo.js";
 import { walkFiles } from "../parser/fileWalker.js";
@@ -142,12 +143,20 @@ export const createRepository = async (repositoryData) => {
 
     await repositoryDoc.save();
 
-    await AnalyzeResultModel.create({
+    const analyzeResult = await AnalyzeResultModel.create({
       repositoryId: repositoryDoc._id,
 
       architectureSummary: summary,
     });
 
+    const criticalPath = await criticalPathAnalysis(repositoryDoc._id);
+
+    analyzeResult.criticalPathAnalysis = criticalPath;
+    await analyzeResult.save();
+
+    repositoryDoc.status = "completed";
+
+    await repositoryDoc.save();
     return {
       success: true,
       data: repositoryDoc.repoName,

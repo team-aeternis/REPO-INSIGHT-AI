@@ -2,9 +2,9 @@ export const chunkText = (
 
    text,
 
-   chunkSize = 1200,
+   chunkSize = 700,
 
-   overlap = 200
+   overlap = 100
 
 ) => {
 
