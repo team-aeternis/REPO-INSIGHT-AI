@@ -96,6 +96,31 @@ export const getRepositoryById = async (id) => {
   }
 };
 
+export const resolveRepositoryByUrl = async (url) => {
+  try {
+    const normalizedUrl = String(url || "").trim();
+    if (!normalizedUrl) {
+      throw new ExpressError(400, "Repository URL is required");
+    }
+
+    const repository = await RepositoryModel.findOne({ githubUrl: normalizedUrl })
+      .select("_id repoName githubUrl")
+      .lean();
+
+    if (!repository) {
+      throw new ExpressError(404, "Repository not found for this URL. Analyze it first.");
+    }
+
+    return {
+      success: true,
+      data: repository,
+      status: 200,
+    };
+  } catch (error) {
+    throw new ExpressError(error.statusCode || 500, error.message);
+  }
+};
+
 export const createRepository = async (repositoryData) => {
   let repoPath = null;
   try {
