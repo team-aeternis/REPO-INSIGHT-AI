@@ -238,10 +238,7 @@ export default function AdminPage() {
       </div>
 
       <Card title="Evaluation Summary by Repository">
-        <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-          <p className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">
-            Using resolved repository URL
-          </p>
+        <div>
           <button
             type="button"
             onClick={fetchEvaluation}
@@ -303,10 +300,7 @@ export default function AdminPage() {
       </Card>
 
       <Card title="Chat Session Summary by Repository">
-        <div className="grid gap-2 md:grid-cols-[1fr_auto]">
-          <p className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700">
-            Using resolved repository URL
-          </p>
+        <div>
           <button
             type="button"
             onClick={fetchChatSummary}

@@ -12,8 +12,11 @@ export const generateEmbeddings = async (
   const embeddingDocuments = [];
   let failedChunkCount = 0;
   let failedFileCount = 0;
+  const MAX_FILES = 180;
+  const MAX_CHUNKS_PER_FILE = 6;
+  const MAX_TOTAL_CHUNKS = 900;
 
-  for (const fileDoc of fileDocuments) {
+  for (const fileDoc of fileDocuments.slice(0, MAX_FILES)) {
     const ignoredPatterns = [
       "node_modules",
       ".json",
@@ -45,9 +48,12 @@ export const generateEmbeddings = async (
         continue;
       }
 
-      const chunks = chunkText(content);
+      const chunks = chunkText(content).slice(0, MAX_CHUNKS_PER_FILE);
 
       for (let i = 0; i < chunks.length; i++) {
+        if (embeddingDocuments.length >= MAX_TOTAL_CHUNKS) {
+          break;
+        }
         const chunk = chunks[i];
 
         try {
@@ -74,15 +80,16 @@ export const generateEmbeddings = async (
             },
           });
 
-          // small delay
-          // prevents HF overload
-
-          await new Promise((resolve) => setTimeout(resolve, 700));
+          // Small throttle to reduce provider burst while keeping processing practical.
+          await new Promise((resolve) => setTimeout(resolve, 120));
         } catch (error) {
           failedChunkCount += 1;
 
           continue;
         }
+      }
+      if (embeddingDocuments.length >= MAX_TOTAL_CHUNKS) {
+        break;
       }
     } catch (error) {
       failedFileCount += 1;
