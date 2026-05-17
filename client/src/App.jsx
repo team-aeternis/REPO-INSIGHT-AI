@@ -20,6 +20,7 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<HomePage />}>
+            <Route index element={<WelcomePage username={user?.username} />} />
             <Route
               path="welcome"
               element={<WelcomePage username={user?.username} />}
