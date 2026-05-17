@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "react-toastify";
+import { useLocation, useNavigate } from "react-router-dom";
 import { askRepoQuestion, submitRepo } from "../services/repoService";
 
 const PHASES = [
@@ -18,6 +19,8 @@ const SUGGESTIONS = [
   "What are important modules?",
   "Where should a new developer start?",
 ];
+
+const EXPLORE_PAGE_STORAGE_KEY = "repo-insight:explore-chat-state";
 
 const toList = (value) => (Array.isArray(value) ? value : value ? [value] : []);
 
@@ -256,6 +259,8 @@ function BlockingLoader({ message }) {
 }
 
 export default function ExplorePage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [repoUrl, setRepoUrl] = useState("");
   const [phaseIndex, setPhaseIndex] = useState(0);
   const [analyzing, setAnalyzing] = useState(false);
@@ -269,6 +274,45 @@ export default function ExplorePage() {
   const blockingMessage = analyzing
     ? PHASES[phaseIndex] || "Analyzing repository..."
     : "Waiting for server response...";
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(EXPLORE_PAGE_STORAGE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      setRepoUrl(saved?.repoUrl || "");
+      setDashboard(saved?.dashboard || null);
+      setMessages(Array.isArray(saved?.messages) ? saved.messages : []);
+      setChatSessionId(saved?.chatSessionId || "");
+      setChatInput(saved?.chatInput || "");
+    } catch {
+      localStorage.removeItem(EXPLORE_PAGE_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(
+      EXPLORE_PAGE_STORAGE_KEY,
+      JSON.stringify({
+        repoUrl,
+        dashboard,
+        messages,
+        chatSessionId,
+        chatInput,
+      }),
+    );
+  }, [repoUrl, dashboard, messages, chatSessionId, chatInput]);
+
+  useEffect(() => {
+    if (!location.state?.startNewChat) return;
+    setRepoUrl("");
+    setDashboard(null);
+    setMessages([]);
+    setChatSessionId("");
+    setChatInput("");
+    localStorage.removeItem(EXPLORE_PAGE_STORAGE_KEY);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate]);
 
   useEffect(() => {
     if (!analyzing) return;
