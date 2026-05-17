@@ -39,7 +39,9 @@ async (
       await EmbeddingChunkModel.find({
 
          repositoryId
-      });
+      })
+         .select("chunkText embeddingVector metadata.filePath")
+         .lean();
 
    const scoredChunks =
       chunks.map(chunk => {

@@ -109,6 +109,20 @@ const isRepositoryRelevant = ({
   return genericRepoIntent || overlap >= 1 || bestScore >= 0.22;
 };
 
+const isClearlyNonRepositoryQuestion = (question = "") => {
+  const q = String(question || "").toLowerCase();
+  return includesAny(q, [
+    "weather",
+    "stock price",
+    "bitcoin price",
+    "movie recommendation",
+    "recipe",
+    "sports score",
+    "politics news",
+    "who is president",
+  ]);
+};
+
 const classifyIntent = (question = "") => {
   const q = question.toLowerCase();
 
@@ -512,16 +526,15 @@ export const repoAgent = async (repositoryId, question, chatHistory = []) => {
 
     // General questions: structured context first, semantic chunks second.
     const relevantChunks = await repoSearchTool(repositoryId, question);
-    if (
-      !isRepositoryRelevant({
-        question,
-        repository,
-        dependencies,
-        files,
-        modules,
-        relevantChunks,
-      })
-    ) {
+    const repoRelevant = isRepositoryRelevant({
+      question,
+      repository,
+      dependencies,
+      files,
+      modules,
+      relevantChunks,
+    });
+    if (!repoRelevant && isClearlyNonRepositoryQuestion(question)) {
       return {
         answer:
           "I can help only with this repository. Please ask repository-related questions about architecture, files, modules, dependencies, flows, or specific code paths.",
@@ -571,7 +584,7 @@ Structured repository context:
 ${structuredContext}
 
 Semantic snippets:
-${chunkContext || "No semantic snippets available."}
+${chunkContext || "No semantic snippets available. Use structured repository context first."}
 
 User question:
 ${question}

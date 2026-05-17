@@ -240,7 +240,9 @@ export const createRepository = async (repositoryData) => {
       fileDocuments,
     );
 
-    await EmbeddingChunkModel.insertMany(embeddingDocuments);
+    if (embeddingDocuments.length > 0) {
+      await EmbeddingChunkModel.insertMany(embeddingDocuments);
+    }
 
     const summary = await summarizeRepo(repositoryDoc._id);
 
