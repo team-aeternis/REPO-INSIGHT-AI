@@ -17,6 +17,8 @@ export const getObservabilitySummary = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+      message: "Observability summary fetched successfully.",
+      statusCode: 200,
       data: {
         totalEvents: total,
         failedEvents: failed,

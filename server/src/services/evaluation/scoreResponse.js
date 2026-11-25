@@ -6,19 +6,29 @@ export const scoreResponse = ({ question = "", answer = "" } = {}) => {
     return { score: 0, passed: false, reason: "Empty answer" };
   }
 
-  let score = 0;
+  const fallback = /could not find enough repository evidence|not available yet|no .* records for this repository/i.test(a);
+  const failed = /^(error|failed|internal server error|unable to generate)/i.test(a);
+  if (failed) {
+    return { score: 0, passed: false, reason: "The response reports a processing failure" };
+  }
 
-  if (a.length >= 40) score += 25;
-  if (a.length >= 120) score += 15;
-  if (/`[^`]+`/.test(a)) score += 20; // grounded path/code references
-  if (/-\s|\d+\.\s/.test(a)) score += 10; // structured readability
-  if (/could not find enough repository evidence/i.test(a)) score += 10; // safe fallback
-  if (q && a.toLowerCase().includes(q.split(" ")[0]?.toLowerCase())) score += 10;
-
+  let score = 10;
+  if (a.length >= 40) score += 10;
+  if (a.length >= 120) score += 10;
+  if (a.length >= 300) score += 5;
+  if (/`[^`]+`/.test(a)) score += 20;
+  if (/^\s*(?:#{1,3}\s|[-*]\s|\d+\.\s)/m.test(a)) score += 10;
+  if (/[.!?](?:\s|$)/.test(a)) score += 10;
+  if (q && a.length > 0) score += 5;
+  if (fallback) score = Math.min(score, 35);
   score = Math.min(100, score);
   return {
     score,
     passed: score >= 55,
-    reason: score >= 55 ? "Answer quality acceptable" : "Answer quality below threshold",
+    reason: fallback
+      ? "The repository has insufficient indexed evidence for a complete answer"
+      : score >= 55
+        ? "Answer is readable and includes useful evidence"
+        : "Answer is too short or lacks supporting detail",
   };
 };

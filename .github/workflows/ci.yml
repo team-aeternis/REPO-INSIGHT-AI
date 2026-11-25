@@ -1,40 +1,46 @@
-name: Repo-Insight-AI CI Pipeline
+name: Repo Insight AI CI
 
 on:
   push:
-    branches: [ "main", "develop" ]
-
   pull_request:
-    branches: [ "main", "develop" ]
+  workflow_dispatch:
 
 jobs:
-  build:
-
+  client:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Install client dependencies
+        working-directory: client
+        run: npm ci
+      - name: Lint client
+        working-directory: client
+        run: npm run lint
+      - name: Build client
+        working-directory: client
+        run: npm run build
 
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: 20
-
-    # Client
-    - name: Install Client Dependencies
-      working-directory: ./client
-      run: npm install
-
-    - name: Build Client
-      working-directory: ./client
-      run: npm run build --if-present
-
-    # Server
-    - name: Install Server Dependencies
-      working-directory: ./server
-      run: npm install
-
-    - name: Run Server Tests
-      working-directory: ./server
-      run: npm test --if-present
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Install server dependencies
+        working-directory: server
+        run: npm ci
+      - name: Run server unit tests
+        working-directory: server
+        run: npm test

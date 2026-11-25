@@ -2,52 +2,31 @@ import RepositoryModel from "../../models/Repository.model.js";
 
 import DependencyModel from "../../models/Dependency.model.js";
 
-import FileModel from "../../models/File.model.js";
 
-import { similaritySearch } from "../vector/similaritySearch.js";
+import { similaritySearchMany } from "../vector/similaritySearch.js";
 
 import { generateResponse } from "../llm/providers/openai.js";
 
 import { extractModules } from "./extractModules.js";
 
 
-export const summarizeRepo = async (repositoryId) => {
+export const summarizeRepo = async (
+  repositoryId,
+  retrievedChunks = null,
+  precomputedModules = null,
+) => {
   try {
-    // repository metadata
-
-    const repository = await RepositoryModel.findById(repositoryId);
-
-    const dependencies = await DependencyModel.find({
-      repositoryId,
-    });
-
-    const files = await FileModel.find({
-      repositoryId,
-    });
-
-    // module extraction
-
-    const modules = await extractModules(repositoryId);
-
-    // semantic retrieval
-
-    const architectureChunks = await similaritySearch(
-      repositoryId,
-
-      "project architecture",
-    );
-
-    const authChunks = await similaritySearch(
-      repositoryId,
-
-      "authentication flow",
-    );
-
-    const databaseChunks = await similaritySearch(
-      repositoryId,
-
-      "database connection",
-    );
+    const [repository, dependencies, modules, semanticChunks] = await Promise.all([
+        RepositoryModel.findById(repositoryId).lean(),
+        DependencyModel.find({ repositoryId }).select("packageName").lean(),
+        precomputedModules || extractModules(repositoryId),
+        retrievedChunks || similaritySearchMany(repositoryId, [
+          "project architecture",
+          "authentication flow",
+          "database connection",
+        ]),
+      ]);
+    const [architectureChunks, authChunks, databaseChunks] = semanticChunks;
 
     const entryPoints =
    repository.entryPoints || [];

@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { useEffect } from "react";
 import HomePage from "./pages/HomePage";
 import "./App.css";
 import LoginPage from "./pages/LoginPage";
@@ -8,25 +9,74 @@ import WelcomePage from "./pages/WelcomePage";
 import { ToastContainer } from "react-toastify";
 import ExplorePage from "./pages/ExplorePage";
 import AdminPage from "./pages/AdminPage";
-import { useSelector } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
+import { fetchUser } from "./redux/auth/authThunk";
+import TermsAcceptanceGate from "./components/TermsAcceptanceGate";
+
+function RequireAuth({ children }) {
+  const { user, initialized } = useSelector((state) => state.auth);
+  const location = useLocation();
+
+  if (!initialized) {
+    return <div className="grid min-h-screen place-items-center text-sm text-slate-500">Loading your session...</div>;
+  }
+  if (!user) {
+    return <Navigate to="/auth/login" state={{ from: location }} replace />;
+  }
+  return children;
+}
+
+function RequireAdmin({ children }) {
+  const { user, initialized } = useSelector((state) => state.auth);
+  const location = useLocation();
+
+  if (!initialized) {
+    return <div className="grid min-h-screen place-items-center text-sm text-slate-500">Loading your session…</div>;
+  }
+  if (!user) {
+    return <Navigate to="/auth/login" state={{ from: location }} replace />;
+  }
+  if (user.role !== "admin") return <Navigate to="/welcome" replace />;
+  return children;
+}
 
 function App() {
+  const dispatch = useDispatch();
   const user = useSelector((state) => {
     return state.auth.user;
   });
+
+  useEffect(() => {
+    dispatch(fetchUser());
+  }, [dispatch]);
 
   return (
     <>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<HomePage />}>
-            <Route index element={<WelcomePage username={user?.username} />} />
+          <Route path="/" element={<RequireAuth><HomePage /></RequireAuth>}>
+            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route path="dashboard" element={<WelcomePage username={user?.name} />} />
             <Route
               path="welcome"
-              element={<WelcomePage username={user?.username} />}
+              element={<Navigate to="/dashboard" replace />}
             />
-            <Route path="explore" element={<ExplorePage />} />
-            <Route path="admin" element={<AdminPage />} />
+            <Route
+              path="explore"
+              element={
+                <TermsAcceptanceGate>
+                  <ExplorePage />
+                </TermsAcceptanceGate>
+              }
+            />
+            <Route
+              path="admin"
+              element={
+                <RequireAdmin>
+                  <AdminPage />
+                </RequireAdmin>
+              }
+            />
           </Route>
 
           <Route path="/auth">

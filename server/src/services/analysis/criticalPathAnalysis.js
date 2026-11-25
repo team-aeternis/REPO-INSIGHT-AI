@@ -7,23 +7,34 @@ from "../../models/File.model.js";
 import AnalyzeResultModel
 from "../../models/AnalyzeResult.model.js";
 
-import { similaritySearch }
+import { similaritySearchMany }
 from "../vector/similaritySearch.js";
 
 import { generateResponse }
 from "../llm/providers/openai.js";
 
 export const criticalPathAnalysis =
-async (repositoryId) => {
+async (repositoryId, retrievedChunks = null, { persist = true } = {}) => {
 
    try {
 
       // repository
 
-      const repository =
-         await RepositoryModel.findById(
-            repositoryId
-         );
+      const [repository, files, semanticChunks] = await Promise.all([
+         RepositoryModel.findById(repositoryId)
+            .select("repoName entryPoints")
+            .lean(),
+         FileModel.find({ repositoryId })
+            .select("filePath category")
+            .lean(),
+         retrievedChunks || similaritySearchMany(repositoryId, [
+            "authentication flow jwt login middleware",
+            "api routing request handling controllers",
+            "database connection mongoose sequelize queries",
+            "frontend routing react pages components",
+            "analysis pipeline processing services",
+         ]),
+      ]);
 
       if (!repository) {
 
@@ -34,12 +45,6 @@ async (repositoryId) => {
 
       // important files
 
-      const files =
-         await FileModel.find({
-
-            repositoryId
-         });
-
       // entry points
 
       const entryPoints =
@@ -47,45 +52,13 @@ async (repositoryId) => {
 
       // semantic retrieval
 
-      const authChunks =
-         await similaritySearch(
-
-            repositoryId,
-
-            "authentication flow jwt login middleware"
-         );
-
-      const routingChunks =
-         await similaritySearch(
-
-            repositoryId,
-
-            "api routing request handling controllers"
-         );
-
-      const databaseChunks =
-         await similaritySearch(
-
-            repositoryId,
-
-            "database connection mongoose sequelize queries"
-         );
-
-      const frontendChunks =
-         await similaritySearch(
-
-            repositoryId,
-
-            "frontend routing react pages components"
-         );
-
-      const analysisChunks =
-         await similaritySearch(
-
-            repositoryId,
-
-            "analysis pipeline processing services"
-         );
+      const [
+         authChunks,
+         routingChunks,
+         databaseChunks,
+         frontendChunks,
+         analysisChunks,
+      ] = semanticChunks;
 
       // categorized files
 
@@ -246,29 +219,12 @@ ${context}
 
       // save/update analysis result
 
-      const existingAnalysis =
-         await AnalyzeResultModel.findOne({
-
-            repositoryId
-         });
-
-      if (existingAnalysis) {
-
-         existingAnalysis
-            .criticalPathAnalysis =
-               criticalPaths;
-
-         await existingAnalysis.save();
-
-      } else {
-
-         await AnalyzeResultModel.create({
-
-            repositoryId,
-
-            criticalPathAnalysis:
-               criticalPaths
-         });
+      if (persist) {
+         await AnalyzeResultModel.findOneAndUpdate(
+            { repositoryId },
+            { criticalPathAnalysis: criticalPaths },
+            { upsert: true, returnDocument: "after", setDefaultsOnInsert: true },
+         );
       }
 
       return criticalPaths;

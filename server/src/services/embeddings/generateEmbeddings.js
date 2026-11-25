@@ -2,7 +2,7 @@ import fs from "fs";
 
 import { chunkText } from "./chunkText.js";
 
-import { createEmbedding } from "../llm/providers/huggingFace.js";
+import { createEmbeddings } from "../llm/providers/huggingFace.js";
 
 export const generateEmbeddings = async (
   repositoryId,
@@ -12,9 +12,11 @@ export const generateEmbeddings = async (
   const embeddingDocuments = [];
   let failedChunkCount = 0;
   let failedFileCount = 0;
+  const chunksToEmbed = [];
   const MAX_FILES = 180;
   const MAX_CHUNKS_PER_FILE = 6;
   const MAX_TOTAL_CHUNKS = 900;
+  const EMBEDDING_BATCH_SIZE = 32;
 
   for (const fileDoc of fileDocuments.slice(0, MAX_FILES)) {
     const ignoredPatterns = [
@@ -51,44 +53,18 @@ export const generateEmbeddings = async (
       const chunks = chunkText(content).slice(0, MAX_CHUNKS_PER_FILE);
 
       for (let i = 0; i < chunks.length; i++) {
-        if (embeddingDocuments.length >= MAX_TOTAL_CHUNKS) {
+        if (chunksToEmbed.length >= MAX_TOTAL_CHUNKS) {
           break;
         }
-        const chunk = chunks[i];
-
-        try {
-          const embedding = await createEmbedding(chunk, {
-            retries: 2,
-            baseDelayMs: 600,
-          });
-
-          embeddingDocuments.push({
-            repositoryId,
-
-            fileId: fileDoc._id,
-
-            chunkText: chunk,
-
-            chunkIndex: i,
-
-            embeddingVector: embedding,
-
-            metadata: {
-              filePath: fileDoc.filePath,
-
-              module: fileDoc.category,
-            },
-          });
-
-          // Small throttle to reduce provider burst while keeping processing practical.
-          await new Promise((resolve) => setTimeout(resolve, 120));
-        } catch (error) {
-          failedChunkCount += 1;
-
-          continue;
-        }
+        chunksToEmbed.push({
+          fileId: fileDoc._id,
+          chunkText: chunks[i],
+          chunkIndex: i,
+          filePath: fileDoc.filePath,
+          module: fileDoc.category,
+        });
       }
-      if (embeddingDocuments.length >= MAX_TOTAL_CHUNKS) {
+      if (chunksToEmbed.length >= MAX_TOTAL_CHUNKS) {
         break;
       }
     } catch (error) {
@@ -96,9 +72,38 @@ export const generateEmbeddings = async (
     }
   }
 
+  for (let start = 0; start < chunksToEmbed.length; start += EMBEDDING_BATCH_SIZE) {
+    const batch = chunksToEmbed.slice(start, start + EMBEDDING_BATCH_SIZE);
+
+    try {
+      const vectors = await createEmbeddings(batch.map((item) => item.chunkText));
+      embeddingDocuments.push(
+        ...batch.map((item, index) => ({
+          repositoryId,
+          fileId: item.fileId,
+          chunkText: item.chunkText,
+          chunkIndex: item.chunkIndex,
+          embeddingVector: vectors[index],
+          metadata: {
+            filePath: item.filePath,
+            module: item.module,
+          },
+        })),
+      );
+    } catch {
+      failedChunkCount += batch.length;
+    }
+  }
+
   if (failedChunkCount > 0 || failedFileCount > 0) {
     console.warn(
       `[Embedding] Completed with partial failures. Failed chunks: ${failedChunkCount}, failed files: ${failedFileCount}, successful chunks: ${embeddingDocuments.length}`,
+    );
+  }
+
+  if (chunksToEmbed.length > 0 && embeddingDocuments.length === 0) {
+    throw new Error(
+      "No repository chunks could be embedded. Check that the local embedding model can be downloaded and loaded.",
     );
   }
 

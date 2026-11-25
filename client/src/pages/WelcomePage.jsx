@@ -2,13 +2,8 @@ import BoltIcon from "@mui/icons-material/Bolt";
 import CodeIcon from "@mui/icons-material/Code";
 import StorageIcon from "@mui/icons-material/Storage";
 import TimelineIcon from "@mui/icons-material/Timeline";
-import { useSelector } from "react-redux";
 
 export default function WelcomePage({ username }) {
-  const { user } = useSelector((state) => {
-    return state.auth;
-  });
-
   return (
     <div className="h-full bg-slate-50 flex items-center justify-center px-4 py-8">
       <div className="max-w-5xl w-full">

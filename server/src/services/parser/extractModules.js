@@ -2,9 +2,9 @@ import FileModel from "../../models/File.model.js";
 
 export const extractModules = async (repositoryId) => {
   try {
-    const files = await FileModel.find({
-      repositoryId,
-    });
+    const files = await FileModel.find({ repositoryId })
+      .select("fileName filePath category imports")
+      .lean();
 
     const modulePatterns = {
       Authentication: ["auth", "jwt", "login", "signup", "token", "session"],

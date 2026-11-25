@@ -5,31 +5,51 @@ import { trackTokenUsage } from "../../observability/tokenTracker.js";
 import { logObservability } from "../../observability/logger.js";
 import { startTimer, getDurationMs } from "../../observability/metrics.js";
 
+const MODEL_ID = "openai/gpt-oss-120b";
+
 const client = new OpenAI({
   apiKey: env.llmApiKey,
   baseURL: "https://api.groq.com/openai/v1"
 });
 
-export const generateResponse = async (prompt) => {
+export const generateResponse = async (prompt, { onToken } = {}) => {
    const startedAt = startTimer();
+   const messages = Array.isArray(prompt) ? prompt : [{ role: "user", content: prompt }];
+   const input = messages.map((message) => `${message.role}: ${message.content}`).join("\n");
 
    try {
-        const response = await client.chat.completions.create({
-            model: "llama-3.3-70b-versatile",
-            messages: [
-                {
-                    role: "user",
-                    content: prompt
-                }
-            ]
-        });
+        let output = "";
+        if (onToken) {
+          const stream = await client.chat.completions.create({
+            model: MODEL_ID,
+            reasoning_effort: "low",
+            max_completion_tokens: 700,
+            messages,
+            stream: true,
+          });
+          for await (const part of stream) {
+            const token = part.choices?.[0]?.delta?.content || "";
+            if (token) {
+              output += token;
+              onToken(token);
+            }
+          }
+        } else {
+          const response = await client.chat.completions.create({
+            model: MODEL_ID,
+            reasoning_effort: "low",
+            max_completion_tokens: 700,
+            messages,
+          });
+          output = response.choices?.[0]?.message?.content || "";
+        }
 
-        const output = response.choices?.[0]?.message?.content || "";
-        const tokens = trackTokenUsage({ input: prompt, output });
+        if (!output.trim()) throw new Error("The AI provider returned an empty answer.");
+        const tokens = trackTokenUsage({ input, output });
 
-        await logObservability({
+        void logObservability({
           endpoint: "LLM generateResponse",
-          modelUsed: "llama-3.3-70b-versatile",
+          modelUsed: MODEL_ID,
           inputTokens: tokens.inputTokens,
           outputTokens: tokens.outputTokens,
           responseTime: getDurationMs(startedAt),
@@ -39,10 +59,10 @@ export const generateResponse = async (prompt) => {
         return output;
 
    } catch (error) {
-        const tokens = trackTokenUsage({ input: prompt, output: "" });
-        await logObservability({
+        const tokens = trackTokenUsage({ input, output: "" });
+        void logObservability({
           endpoint: "LLM generateResponse",
-          modelUsed: "llama-3.3-70b-versatile",
+          modelUsed: MODEL_ID,
           inputTokens: tokens.inputTokens,
           outputTokens: 0,
           responseTime: getDurationMs(startedAt),

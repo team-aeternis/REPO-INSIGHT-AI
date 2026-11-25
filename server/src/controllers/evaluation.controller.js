@@ -19,6 +19,8 @@ export const getEvaluationSummary = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
+      message: "Evaluation summary fetched successfully.",
+      statusCode: 200,
       data: {
         repositoryId,
         totalEvaluations: total,

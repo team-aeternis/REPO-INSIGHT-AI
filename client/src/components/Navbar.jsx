@@ -1,8 +1,26 @@
 import { AppBar, Toolbar, IconButton, Button } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
 import AccountCircleIcon from "@mui/icons-material/AccountCircle";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
+import { useDispatch, useSelector } from "react-redux";
+import { logOutUser } from "../redux/auth/authThunk";
+import { toast } from "react-toastify";
+
 export default function Navbar({ open, setOpen }) {
+  const { user } = useSelector((state) => state.auth);
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
+
+  const handleSignOut = async () => {
+    try {
+      await dispatch(logOutUser()).unwrap();
+      toast.success("You have signed out.");
+      navigate("/auth/login");
+    } catch (error) {
+      toast.error(typeof error === "string" ? error : "Sign out failed.");
+    }
+  };
+
   return (
     <AppBar
       position="sticky"
@@ -23,7 +41,7 @@ export default function Navbar({ open, setOpen }) {
         </div>
 
         <div className="hidden md:flex items-center gap-4 text-sm font-medium text-slate-600">
-          <NavLink to="/welcome" className="hover:text-slate-900">
+          <NavLink to="/dashboard" className="hover:text-slate-900">
             Overview
           </NavLink>
           <NavLink to="/explore" className="hover:text-slate-900">
@@ -33,13 +51,28 @@ export default function Navbar({ open, setOpen }) {
 
         <div className="flex items-center gap-3">
           <Button className="normal-case text-slate-700">
-            <NavLink to="/explore">
+            <NavLink to="/explore" state={{ startNewChat: true }}>
               New Insight
             </NavLink>
           </Button>
-          <IconButton>
-            <AccountCircleIcon />
-          </IconButton>
+          {user ? (
+            <>
+              <span className="hidden text-xs text-slate-500 sm:inline">
+                {user.name}
+              </span>
+              <Button onClick={handleSignOut} className="normal-case text-slate-700">
+                Sign out
+              </Button>
+            </>
+          ) : (
+            <Button
+              onClick={() => navigate("/auth/login")}
+              startIcon={<AccountCircleIcon />}
+              className="normal-case text-slate-700"
+            >
+              Sign in
+            </Button>
+          )}
         </div>
       </Toolbar>
     </AppBar>
