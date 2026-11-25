@@ -7,7 +7,8 @@ export const connectDB = async () => {
 
       const connection =
          await mongoose.connect(
-            env.MONGODB_URL
+            env.MONGODB_URL,
+            env.DB_NAME ? { dbName: env.DB_NAME } : undefined,
          );
 
       console.log(
