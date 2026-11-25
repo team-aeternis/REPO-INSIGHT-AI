@@ -24,9 +24,11 @@ services:
       MONGO_URL: mongodb://mongodb:27017/repo_intelligence
       MONGO_DB_NAME: repo_intelligence
       FRONTEND_URL: http://localhost:5173
+      JWT_SECRET: ${JWT_SECRET}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
       LLM_API_KEY: ${LLM_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
-      HUGGINGFACE_API_KEY: ${HUGGINGFACE_API_KEY}
 
 volumes:
   mongo_data:

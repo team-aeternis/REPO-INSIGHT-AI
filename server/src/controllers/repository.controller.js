@@ -4,7 +4,7 @@ import * as RepositoryService from "../services/repository/repository.service.js
 
 export const getAllRepositories = async (req, res, next) => {
   try {
-    const response = await RepositoryService.getAllRepositories();
+    const response = await RepositoryService.getAllRepositories(req.user.id);
 
     if (response.success) {
       return successResponse(
@@ -29,7 +29,7 @@ export const getRepositoryById = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const response = await RepositoryService.getRepositoryById(id);
+    const response = await RepositoryService.getRepositoryById(id, req.user.id);
 
     if (response.success) {
       return successResponse(
@@ -53,7 +53,7 @@ export const resolveRepositoryByUrl = async (req, res, next) => {
   try {
     const { url } = req.query;
 
-    const response = await RepositoryService.resolveRepositoryByUrl(url);
+    const response = await RepositoryService.resolveRepositoryByUrl(url, req.user.id);
 
     if (response.success) {
       return successResponse(
@@ -81,7 +81,7 @@ export const createRepository = async (req, res, next) => {
 
    
 
-    const response = await RepositoryService.createRepository({ name, url });
+    const response = await RepositoryService.createRepository({ name, url }, req.user.id);
 
     if (response.success) {
       return successResponse(
@@ -110,7 +110,7 @@ export const updateRepository = async (req, res, next) => {
     const response = await RepositoryService.updateRepository(id, {
       name,
       url,
-    });
+    }, req.user.id);
 
     if (response.success) {
       return successResponse(
@@ -135,7 +135,7 @@ export const deleteRepository = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const response = await RepositoryService.deleteRepository(id);
+    const response = await RepositoryService.deleteRepository(id, req.user.id);
 
     if (response.success) {
       return successResponse(

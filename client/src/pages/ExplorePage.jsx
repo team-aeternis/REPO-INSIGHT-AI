@@ -3,13 +3,26 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { toast } from "react-toastify";
 import { useLocation, useNavigate } from "react-router-dom";
-import { askRepoQuestion, submitRepo } from "../services/repoService";
+import {
+  askRepoQuestion,
+  getChatSession,
+  getRepositoryById,
+  submitRepo,
+} from "../services/repoService";
 
-const PHASES = [
-  "Cloning Repository...",
-  "Extracting Dependencies...",
-  "Generating Embeddings...",
-  "Analyzing Architecture...",
+const ANALYSIS_STEPS = [
+  {
+    title: "Clone repository",
+    detail: "Fetching source from GitHub",
+  },
+  {
+    title: "Extract code context",
+    detail: "Reading files and dependencies",
+  },
+  {
+    title: "Generate insights",
+    detail: "Mapping architecture and key paths",
+  },
 ];
 
 const SUGGESTIONS = [
@@ -19,8 +32,6 @@ const SUGGESTIONS = [
   "What are important modules?",
   "Where should a new developer start?",
 ];
-
-const EXPLORE_PAGE_STORAGE_KEY = "repo-insight:explore-chat-state";
 
 const toList = (value) => (Array.isArray(value) ? value : value ? [value] : []);
 
@@ -258,6 +269,66 @@ function BlockingLoader({ message }) {
   );
 }
 
+function RepositoryProgressTracker({ activeStep, repositoryUrl }) {
+  const active = ANALYSIS_STEPS[activeStep];
+
+  return (
+    <section
+      aria-live="polite"
+      aria-label="GitHub repository analysis progress"
+      className="mb-6 w-full max-w-2xl rounded-xl border border-slate-200 border-l-4 border-l-teal-500 bg-white px-4 py-4 shadow-sm sm:px-5"
+    >
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-800">Analyzing repository</p>
+          <p className="mt-0.5 truncate text-xs text-slate-500">{repositoryUrl}</p>
+        </div>
+        <span className="shrink-0 rounded-full bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-700">
+          {activeStep + 1} / {ANALYSIS_STEPS.length}
+        </span>
+      </div>
+
+      <div className="mt-4 flex items-center" aria-hidden="true">
+        {ANALYSIS_STEPS.map((step, index) => (
+          <div key={step.title} className="contents">
+            <span
+              className={`h-2.5 w-2.5 shrink-0 rounded-full ${
+                index < activeStep
+                  ? "bg-teal-500"
+                  : index === activeStep
+                    ? "bg-amber-400 ring-4 ring-amber-100"
+                    : "bg-slate-200"
+              }`}
+            />
+            {index < ANALYSIS_STEPS.length - 1 && (
+              <span className={`h-0.5 flex-1 ${index < activeStep ? "bg-teal-400" : "bg-slate-200"}`} />
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-2 flex justify-between gap-2">
+        {ANALYSIS_STEPS.map((step, index) => (
+          <span
+            key={step.title}
+            className={`max-w-[33%] text-xs ${
+              index === activeStep
+                ? "font-semibold text-slate-800"
+                : index < activeStep
+                  ? "text-teal-700"
+                  : "text-slate-400"
+            }`}
+          >
+            {step.title}
+          </span>
+        ))}
+      </div>
+
+      <p className="mt-3 text-xs text-slate-500">{active.detail}</p>
+    </section>
+  );
+}
+
 export default function ExplorePage() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -269,62 +340,100 @@ export default function ExplorePage() {
   const [chatSessionId, setChatSessionId] = useState("");
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const [streamingText, setStreamingText] = useState("");
   const textareaRef = useRef(null);
-  const isBlocking = analyzing || chatLoading;
-  const blockingMessage = analyzing
-    ? PHASES[phaseIndex] || "Analyzing repository..."
-    : "Waiting for server response...";
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(EXPLORE_PAGE_STORAGE_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw);
-      setRepoUrl(saved?.repoUrl || "");
-      setDashboard(saved?.dashboard || null);
-      setMessages(Array.isArray(saved?.messages) ? saved.messages : []);
-      setChatSessionId(saved?.chatSessionId || "");
-      setChatInput(saved?.chatInput || "");
-    } catch {
-      localStorage.removeItem(EXPLORE_PAGE_STORAGE_KEY);
-    }
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem(
-      EXPLORE_PAGE_STORAGE_KEY,
-      JSON.stringify({
-        repoUrl,
-        dashboard,
-        messages,
-        chatSessionId,
-        chatInput,
-      }),
-    );
-  }, [repoUrl, dashboard, messages, chatSessionId, chatInput]);
+  const messageEndRef = useRef(null);
+  const blockingMessage = "Waiting for server response...";
 
   useEffect(() => {
     if (!location.state?.startNewChat) return;
-    setRepoUrl("");
-    setDashboard(null);
-    setMessages([]);
-    setChatSessionId("");
-    setChatInput("");
-    localStorage.removeItem(EXPLORE_PAGE_STORAGE_KEY);
-    navigate(location.pathname, { replace: true, state: null });
+    const timer = window.setTimeout(() => {
+      setRepoUrl("");
+      setDashboard(null);
+      setMessages([]);
+      setChatSessionId("");
+      setChatInput("");
+      navigate(location.pathname, { replace: true, state: null });
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [location.pathname, location.state, navigate]);
+
+  useEffect(() => {
+    const sessionId = location.state?.openChatSessionId;
+    if (!sessionId) return undefined;
+
+    let active = true;
+    const loadingTimer = window.setTimeout(() => {
+      if (active) setChatLoading(true);
+    }, 0);
+
+    const restoreSession = async () => {
+      try {
+        const sessionResponse = await getChatSession(sessionId);
+        if (!sessionResponse?.success) {
+          toast.error(sessionResponse?.message || "Could not load this chat.");
+          return;
+        }
+
+        const session = sessionResponse.data;
+        const repositoryId = session?.repositoryId?._id || session?.repositoryId;
+        if (!repositoryId) {
+          toast.error("This chat is not linked to an available repository.");
+          return;
+        }
+        const repositoryResponse = await getRepositoryById(repositoryId);
+        if (!repositoryResponse?.success) {
+          toast.error(repositoryResponse?.message || "Could not load the repository.");
+          return;
+        }
+
+        if (!active) return;
+        const repository = repositoryResponse.data?.repository;
+        setRepoUrl(repository?.githubUrl || session?.repositoryId?.githubUrl || "");
+        setDashboard(repositoryResponse.data);
+        setChatSessionId(session._id);
+        setMessages((session.messages || []).map((message) => ({
+          role: message.role,
+          text: message.content,
+          sources: toList(message.sources).map(cleanPath).filter(Boolean),
+          navigationHelp: toList(message.navigationHelp).map(cleanPath).filter(Boolean),
+        })));
+        setChatInput("");
+        navigate(location.pathname, { replace: true, state: null });
+      } catch {
+        if (active) toast.error("Could not load this chat.");
+      } finally {
+        if (active) {
+          setChatLoading(false);
+          navigate(location.pathname, { replace: true, state: null });
+        }
+      }
+    };
+
+    restoreSession();
+    return () => {
+      active = false;
+      window.clearTimeout(loadingTimer);
+    };
+  }, [location.pathname, location.state?.openChatSessionId, navigate]);
 
   useEffect(() => {
     if (!analyzing) return;
     const id = setInterval(() => {
-      setPhaseIndex((v) => (v + 1) % PHASES.length);
-    }, 1200);
+      setPhaseIndex((current) =>
+        Math.min(current + 1, ANALYSIS_STEPS.length - 1),
+      );
+    }, 8000);
     return () => clearInterval(id);
   }, [analyzing]);
 
   const repository = dashboard?.repository || {};
   const analysis = dashboard?.analysis || {};
   const modules = analysis?.modules || {};
+
+  useEffect(() => {
+    messageEndRef.current?.scrollIntoView({ behavior: chatLoading ? "auto" : "smooth", block: "end" });
+  }, [messages, streamingText, chatLoading]);
 
   const entryPoints = useMemo(
     () =>
@@ -373,7 +482,7 @@ export default function ExplorePage() {
     toast.success(response?.message || "Repository analyzed");
   };
 
-  const sendMessage = async (text) => {
+  const sendMessage = async (text, { retry = false } = {}) => {
     const question = text.trim();
     if (!question || chatLoading) return;
 
@@ -383,26 +492,41 @@ export default function ExplorePage() {
       return;
     }
 
-    setMessages((prev) => [...prev, { role: "user", text: question }]);
+    if (!retry) setMessages((prev) => [...prev, { role: "user", text: question }]);
     setChatInput("");
+    setStreamingText("");
     setChatLoading(true);
 
-    const response = await askRepoQuestion({
-      repositoryId,
-      question,
-      sessionId: chatSessionId || undefined,
-    });
+    let response;
+    try {
+      response = await askRepoQuestion({
+        repositoryId,
+        question,
+        sessionId: chatSessionId || undefined,
+        onToken: (token) => setStreamingText((current) => current + token),
+      });
+    } catch (error) {
+      response = { success: false, message: error?.message || "Chat request failed." };
+    }
     setChatLoading(false);
 
     if (!response?.success) {
+      setStreamingText("");
       toast.error(response?.message || "Chat failed");
+      setMessages((prev) => [
+        ...prev,
+        { role: "assistant", text: response?.message || "I couldn’t complete that request.", error: true, retryQuestion: question },
+      ]);
+      setChatInput(question);
       return;
     }
 
+    setStreamingText("");
     const data = response?.data || {};
     if (data?.sessionId) {
       setChatSessionId(data.sessionId);
     }
+    window.dispatchEvent(new Event("repo-insight:chat-sessions-updated"));
     setMessages((prev) => [
       ...prev,
       {
@@ -433,10 +557,12 @@ export default function ExplorePage() {
   // ── No dashboard yet: landing / URL-submit view ──────────────────────────
   if (!dashboard) {
     return (
-      <>
-        {isBlocking && <BlockingLoader message={blockingMessage} />}
-        <div className="flex flex-col items-center justify-center min-h-full bg-white px-4 py-16">
-          <div className="w-full max-w-2xl flex flex-col items-center gap-6">
+      <div className="flex min-h-full flex-col items-center justify-center bg-white px-4 py-8 sm:py-12">
+        {analyzing && (
+          <RepositoryProgressTracker activeStep={phaseIndex} repositoryUrl={repoUrl} />
+        )}
+        {chatLoading && <BlockingLoader message={blockingMessage} />}
+        <div className="w-full max-w-2xl flex flex-col items-center gap-6">
           {/* Heading */}
           <div className="text-center space-y-2">
             <h1 className="text-3xl font-semibold text-gray-900 tracking-tight">
@@ -455,56 +581,35 @@ export default function ExplorePage() {
           >
             <textarea
               required
+              disabled={analyzing}
               value={repoUrl}
               onChange={(e) => setRepoUrl(e.target.value)}
               placeholder="https://github.com/owner/repository"
               rows={3}
-              className="w-full resize-none bg-transparent px-5 pt-4 pb-2 text-sm text-gray-800 outline-none placeholder:text-gray-400"
+              className="w-full resize-none bg-transparent px-5 pt-4 pb-2 text-sm text-gray-800 outline-none placeholder:text-gray-400 disabled:cursor-wait disabled:opacity-70"
             />
             <div className="flex items-center justify-between px-4 pb-3">
               <span className="text-xs text-gray-400">
-                {analyzing ? PHASES[phaseIndex] : "Press Enter or click →"}
+                {analyzing ? ANALYSIS_STEPS[phaseIndex].title : "Press Enter or click →"}
               </span>
               <button
                 type="submit"
                 disabled={analyzing || !repoUrl.trim()}
                 className="flex items-center justify-center w-9 h-9 rounded-lg bg-gray-900 text-white hover:bg-gray-700 disabled:opacity-40 transition-colors"
               >
-                {analyzing ? (
-                  <svg
-                    className="animate-spin w-4 h-4"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                  >
-                    <circle
-                      className="opacity-25"
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                    />
-                    <path
-                      className="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8v8z"
-                    />
-                  </svg>
-                ) : (
-                  <svg
-                    className="w-4 h-4"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                  >
-                    <path
-                      d="M5 12h14M13 6l6 6-6 6"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                )}
+                <svg
+                  className="w-4 h-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                >
+                  <path
+                    d="M5 12h14M13 6l6 6-6 6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
               </button>
             </div>
           </form>
@@ -519,16 +624,14 @@ export default function ExplorePage() {
               https://github.com/vercel/next.js
             </span>
           </p>
-          </div>
         </div>
-      </>
+      </div>
     );
   }
 
   // ── Dashboard: chat view ─────────────────────────────────────────────────
   return (
     <>
-      {isBlocking && <BlockingLoader message={blockingMessage} />}
       <div className="flex flex-col h-full bg-white">
       {/* Message thread */}
       <div
@@ -572,6 +675,16 @@ export default function ExplorePage() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <Markdown text={msg.text} />
+                      {msg.error && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMessages((prev) => prev.filter((_, itemIndex) => itemIndex !== idx));
+                            sendMessage(msg.retryQuestion, { retry: true });
+                          }}
+                          className="mt-2 text-sm font-medium text-blue-600 hover:underline"
+                        >Retry response</button>
+                      )}
                     </div>
                   </div>
 
@@ -592,8 +705,15 @@ export default function ExplorePage() {
             </div>
           ))}
 
+          {chatLoading && streamingText && (
+            <div className="flex gap-3 items-start">
+              <div className="mt-1 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-gray-900 text-xs text-white">AI</div>
+              <div className="min-w-0 flex-1"><Markdown text={streamingText} /></div>
+            </div>
+          )}
+
           {/* Typing indicator */}
-          {chatLoading && (
+          {chatLoading && !streamingText && (
             <div className="flex gap-3 items-center">
               <div className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center flex-shrink-0">
                 <svg
@@ -620,6 +740,8 @@ export default function ExplorePage() {
               </div>
             </div>
           )}
+
+          <div ref={messageEndRef} />
 
           {messages.length === 0 && (
             <details className="rounded-xl border border-gray-200 overflow-hidden">
@@ -753,7 +875,11 @@ export default function ExplorePage() {
             <textarea
               ref={textareaRef}
               value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
+              onChange={(e) => {
+                setChatInput(e.target.value);
+                e.currentTarget.style.height = "auto";
+                e.currentTarget.style.height = `${Math.min(e.currentTarget.scrollHeight, 128)}px`;
+              }}
               onKeyDown={handleChatKeyDown}
               placeholder="Ask a question about the repository…"
               rows={1}

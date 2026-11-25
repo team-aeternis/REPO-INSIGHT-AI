@@ -2,10 +2,14 @@ import mongoose from "mongoose";
 
 const repositorySchema = new mongoose.Schema(
   {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
     githubUrl: {
       type: String,
       required: true,
-      unique: true,
     },
 
     repoName: {
@@ -75,7 +79,11 @@ const repositorySchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    autoIndex: false,
   },
 );
+
+repositorySchema.index({ userId: 1, githubUrl: 1 }, { unique: true });
+repositorySchema.index({ userId: 1, updatedAt: -1 });
 
 export default mongoose.model("Repository", repositorySchema);

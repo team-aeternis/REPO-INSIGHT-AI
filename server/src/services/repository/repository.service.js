@@ -4,6 +4,7 @@ import DependencyModel from "../../models/Dependency.model.js";
 import EmbeddingChunkModel from "../../models/EmbeddingChunk.model.js";
 import AnalyzeResultModel from "../../models/AnalyzeResult.model.js";
 import { generateEmbeddings } from "../embeddings/generateEmbeddings.js";
+import { similaritySearchMany } from "../vector/similaritySearch.js";
 import { extractModules } from "../parser/extractModules.js";
 import FileModel from "../../models/File.model.js";
 import fs from "fs";
@@ -18,6 +19,8 @@ import { criticalPathAnalysis } from "../analysis/criticalPathAnalysis.js";
 
 import { cloneRepo } from "../github/cloneRepo.js";
 import { walkFiles } from "../parser/fileWalker.js";
+import { pruneUserRepositories } from "../retention/userRetention.js";
+import { invalidateRepositoryChunkCache } from "../vector/similaritySearch.js";
 
 const isValidGitHubRepoUrl = (rawUrl = "") => {
   try {
@@ -58,10 +61,10 @@ const mapCloneError = (error) => {
   return new ExpressError(500, "Failed to clone repository.");
 };
 
-export const getAllRepositories = async () => {
+export const getAllRepositories = async (userId) => {
   try {
-    const repositories = await RepositoryModel.find({})
-      .sort({ createdAt: -1 })
+    const repositories = await RepositoryModel.find({ userId })
+      .sort({ updatedAt: -1 })
       .lean();
 
     return {
@@ -74,9 +77,9 @@ export const getAllRepositories = async () => {
   }
 };
 
-export const getRepositoryById = async (id) => {
+export const getRepositoryById = async (id, userId) => {
   try {
-    const repository = await RepositoryModel.findById(id).lean();
+    const repository = await RepositoryModel.findOne({ _id: id, userId }).lean();
     if (!repository) {
       throw new ExpressError(404, "Repository not found");
     }
@@ -96,14 +99,14 @@ export const getRepositoryById = async (id) => {
   }
 };
 
-export const resolveRepositoryByUrl = async (url) => {
+export const resolveRepositoryByUrl = async (url, userId) => {
   try {
     const normalizedUrl = String(url || "").trim();
     if (!normalizedUrl) {
       throw new ExpressError(400, "Repository URL is required");
     }
 
-    const repository = await RepositoryModel.findOne({ githubUrl: normalizedUrl })
+    const repository = await RepositoryModel.findOne({ githubUrl: normalizedUrl, userId })
       .select("_id repoName githubUrl")
       .lean();
 
@@ -121,7 +124,7 @@ export const resolveRepositoryByUrl = async (url) => {
   }
 };
 
-export const createRepository = async (repositoryData) => {
+export const createRepository = async (repositoryData, userId) => {
   let repoPath = null;
   try {
     const { url } = repositoryData;
@@ -155,8 +158,9 @@ export const createRepository = async (repositoryData) => {
 
     // 3) Single DB upsert: update if exists, create if not.
     const repositoryDoc = await RepositoryModel.findOneAndUpdate(
-      { githubUrl: normalizedUrl },
+      { githubUrl: normalizedUrl, userId },
       {
+        userId,
         githubUrl: normalizedUrl,
         repoName: name,
         owner,
@@ -228,6 +232,7 @@ export const createRepository = async (repositoryData) => {
       await FileModel.insertMany(validFileDocs);
     }
 
+    invalidateRepositoryChunkCache(repositoryDoc._id);
     await EmbeddingChunkModel.deleteMany({ repositoryId: repositoryDoc._id });
 
     const fileDocuments = await FileModel.find({
@@ -243,26 +248,43 @@ export const createRepository = async (repositoryData) => {
     if (embeddingDocuments.length > 0) {
       await EmbeddingChunkModel.insertMany(embeddingDocuments);
     }
+    invalidateRepositoryChunkCache(repositoryDoc._id);
 
-    const summary = await summarizeRepo(repositoryDoc._id);
+    const analysisQueries = [
+      "project architecture",
+      "authentication flow",
+      "database connection",
+      "authentication flow jwt login middleware",
+      "api routing request handling controllers",
+      "database connection mongoose sequelize queries",
+      "frontend routing react pages components",
+      "analysis pipeline processing services",
+    ];
+    const [module, retrievedChunks] = await Promise.all([
+      extractModules(repositoryDoc._id),
+      similaritySearchMany(repositoryDoc._id, analysisQueries),
+    ]);
+    const [summary, criticalPath] = await Promise.all([
+      summarizeRepo(repositoryDoc._id, retrievedChunks.slice(0, 3), module),
+      criticalPathAnalysis(repositoryDoc._id, retrievedChunks.slice(3), {
+        persist: false,
+      }),
+    ]);
 
     const analyzeResult = await AnalyzeResultModel.findOneAndUpdate(
       { repositoryId: repositoryDoc._id },
-      { architectureSummary: summary },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
+      {
+        architectureSummary: summary,
+        criticalPathAnalysis: criticalPath,
+        modules: module,
+      },
+      { upsert: true, returnDocument: "after", setDefaultsOnInsert: true },
     );
-
-    const criticalPath = await criticalPathAnalysis(repositoryDoc._id);
-
-    const module = await extractModules(repositoryDoc._id);
-
-    analyzeResult.criticalPathAnalysis = criticalPath;
-    analyzeResult.modules = module;
-    await analyzeResult.save();
 
     repositoryDoc.status = "completed";
 
     await repositoryDoc.save();
+    await pruneUserRepositories(userId);
 
     const dashboardPayload = {
       repository: repositoryDoc.toObject(),
@@ -293,7 +315,7 @@ export const createRepository = async (repositoryData) => {
   }
 };
 
-export const updateRepository = async (id, repositoryData) => {
+export const updateRepository = async (id, repositoryData, userId) => {
   try {
     const { name, url } = repositoryData;
 
@@ -301,10 +323,8 @@ export const updateRepository = async (id, repositoryData) => {
       throw new ExpressError(400, "Name and URL are required");
     }
 
-    const existingRepo = await RepositoryModel.findOne({ githubUrl: url });
-
-    const updatedRepository = await RepositoryModel.findByIdAndUpdate(
-      id,
+    const updatedRepository = await RepositoryModel.findOneAndUpdate(
+      { _id: id, userId },
       {
         githubUrl: url,
         repoName: name,
@@ -312,6 +332,7 @@ export const updateRepository = async (id, repositoryData) => {
       },
       { new: true },
     );
+    if (!updatedRepository) throw new ExpressError(404, "Repository not found");
     return {
       success: true,
       data: updatedRepository.repoName,
@@ -323,9 +344,10 @@ export const updateRepository = async (id, repositoryData) => {
   }
 };
 
-export const deleteRepository = async (id) => {
+export const deleteRepository = async (id, userId) => {
   try {
-    const deletedRepository = await RepositoryModel.findByIdAndDelete(id);
+    const deletedRepository = await RepositoryModel.findOneAndDelete({ _id: id, userId });
+    if (!deletedRepository) throw new ExpressError(404, "Repository not found");
     return {
       success: true,
       data: deletedRepository.repoName,

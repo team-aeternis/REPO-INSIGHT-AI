@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { API } from "../services/API";
 import { toast } from "react-toastify";
 
@@ -44,7 +44,7 @@ export default function AdminPage() {
     }
   };
 
-  const fetchHealth = async () => {
+  const fetchHealth = useCallback(async () => {
     try {
       const [healthRes, readyRes] = await Promise.all([
         API.get("/api/health"),
@@ -52,10 +52,10 @@ export default function AdminPage() {
       ]);
       setHealth(healthRes?.data?.data || null);
       setReady(readyRes?.data?.data || null);
-    } catch (error) {
+    } catch {
       toast.error("Failed to fetch health summary");
     }
-  };
+  }, []);
 
   const fetchEvaluation = async () => {
     let repo = resolvedRepo;
@@ -88,7 +88,7 @@ export default function AdminPage() {
     }
   };
 
-  const fetchObservability = async () => {
+  const fetchObservability = useCallback(async () => {
     try {
       setLoading(true);
       const repoId = repoIdForObs.trim() || resolvedRepo?._id || "";
@@ -102,7 +102,7 @@ export default function AdminPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [repoIdForObs, resolvedRepo]);
 
   const fetchChatSummary = async () => {
     let repo = resolvedRepo;
@@ -110,7 +110,7 @@ export default function AdminPage() {
     if (!repo?._id) return;
     try {
       setLoading(true);
-      const res = await API.get(`/api/chat/sessions/${repo._id}`);
+      const res = await API.get(`/api/chat/sessions/summary/${repo._id}`);
       setChatSummary(res?.data?.data || null);
     } catch {
       toast.error("Failed to fetch chat sessions summary");
@@ -120,9 +120,12 @@ export default function AdminPage() {
   };
 
   useEffect(() => {
-    fetchHealth();
-    fetchObservability();
-  }, []);
+    const timer = window.setTimeout(() => {
+      void fetchHealth();
+      void fetchObservability();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [fetchHealth, fetchObservability]);
 
   return (
     <div className="mx-auto w-full max-w-5xl px-4 py-6 space-y-4">

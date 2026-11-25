@@ -1,313 +1,245 @@
-﻿# Repo Insight AI
+# Repo Insight AI
 
-Repo Insight AI is a full-stack repository intelligence platform that ingests a GitHub repository, builds a semantic understanding of its codebase, and lets developers ask grounded questions about architecture and implementation.
+**A clearer view of your code.**
 
-## Problem We Solve
+Repo Insight AI turns a GitHub repository into an explorable engineering workspace. It maps a codebase, surfaces its architecture and dependencies, and lets developers ask questions grounded in indexed source files.
 
-Modern repositories are large, fast-moving, and hard to onboard into. Typical pain points:
+**Created by Team Aeternis**
 
-- New developers need hours or days to understand architecture and entry points.
-- Teams struggle to trace dependency usage and code relationships quickly.
-- AI answers about code are often generic and not grounded in the actual repository.
+---
 
-Repo Insight AI addresses this by cloning the target repository, parsing real files, generating embeddings, and answering questions using retrieval over actual code chunks.
+## Project overview
 
-## Solution Approach
+Understanding an unfamiliar repository takes time. Important routes, services, entry points, and dependencies can be spread across hundreds of files. Repo Insight AI brings that information together and provides a conversational way to explore it.
 
-The backend follows a retrieval-augmented workflow (RAG) specialized for source code:
+The platform analyzes a repository and gives developers:
 
-1. Accept a GitHub repository URL.
-2. Clone it into an isolated local workspace.
-3. Parse dependencies, imports, and likely entry points.
-4. Persist repository metadata to MongoDB.
-5. Chunk file content and generate vector embeddings.
-6. Run semantic similarity search for user questions.
-7. Generate final answers only from retrieved context.
+- An architecture summary and onboarding guidance.
+- Detected entry points, modules, dependencies, and technology stack.
+- A map of likely request and execution paths.
+- Repository-aware chat with related source files and suggested starting points.
+- Separate, private repository and chat histories for each account.
 
-## End-to-End Workflow Diagram
+## A guided repository workflow
 
 ```mermaid
-flowchart TD
-    A[User submits GitHub URL] --> B[POST /api/repo]
-    B --> C[Clone repository to server/temp/repositories/<workspaceId>]
-    C --> D[Walk text files and filter binaries/large files]
-    D --> E[Extract dependencies + imports + entry points]
-    E --> F[Store Repository/Dependency/File documents in MongoDB]
-    F --> G[Chunk file content]
-    G --> H[Generate embeddings with Hugging Face model]
-    H --> I[Store EmbeddingChunk vectors]
-    I --> J[Create architecture summary]
-    J --> K[Save AnalyzeResult]
-    K --> L[Repository ready for chat]
-
-    M[User asks question] --> N[POST /api/chat/ask]
-    N --> O[Create embedding for question]
-    O --> P[Cosine similarity search over EmbeddingChunk]
-    P --> Q[Build grounded prompt with top matching chunks]
-    Q --> R[Generate response with LLM]
-    R --> S[Return answer + source file paths]
+flowchart LR
+    A[Sign in] --> B[Submit GitHub URL]
+    B --> C[Clone and inspect files]
+    C --> D[Extract dependencies, imports, and entry points]
+    D --> E[Chunk code and create embeddings]
+    E --> F[Build repository insights]
+    F --> G[Ask questions in chat]
+    G --> H[Retrieve relevant files]
+    H --> I[Stream a grounded answer with sources]
 ```
 
-## Architecture Overview
+## Product highlights
+
+### Repository intelligence
+
+Submit a public GitHub repository to build a searchable index. The ingestion pipeline filters unsuitable files, identifies common project structure, parses dependencies across Node.js, Python, Go, Rust, and Java projects, and creates semantic code chunks.
+
+### Source-grounded chat
+
+Ask questions in natural language. Repo Insight AI combines semantic similarity with matches from code and file paths, then streams a concise answer with relevant files. Chat history is session-based and scoped to the signed-in user.
+
+### Account and access controls
+
+- Email and password authentication, plus Google sign-in.
+- User and admin roles; public registration creates standard user accounts.
+- Repository and chat ownership checks.
+- Terms of use acceptance before using protected project features.
+- Automatic retention of each user’s 20 most recent chats and 10 most recent repositories.
+
+### Operations and evaluation
+
+- Health, readiness, and ping endpoints for service monitoring.
+- Admin views for repository evaluation and observability.
+- CI checks for server unit tests, client lint, and production build.
+
+## How answers are produced
+
+1. A user submits a GitHub URL.
+2. The Express service clones and indexes the repository.
+3. Parsers extract structural metadata and dependency information.
+4. A local Transformers.js embedding model vectorizes selected source chunks.
+5. Repository and embedding data are stored in MongoDB.
+6. For a question, cached vectors and a hybrid semantic/lexical ranking identify useful code snippets.
+7. The LLM receives the question, recent conversation, and retrieved repository evidence; its response streams to the chat interface.
+
+The assistant is instructed to cite paths and to say when the indexed evidence is insufficient. Retrieval results are cached in bounded, short-lived in-memory caches to reduce repeated database and embedding work.
+
+## System architecture
+
+```mermaid
+flowchart TB
+    Browser[React + Vite client]
+    API[Express API]
+    Auth[Authentication and access middleware]
+    Ingest[Repository ingestion and parsers]
+    Search[Embedding and hybrid retrieval]
+    Agent[Repository chat agent]
+    Mongo[(MongoDB)]
+    HF[Transformers.js embedding model]
+    LLM[Groq OpenAI-compatible chat API]
+
+    Browser -->|JSON API and streamed chat| API
+    API --> Auth
+    Auth --> Ingest
+    Auth --> Agent
+    Ingest --> HF
+    Ingest --> Mongo
+    Agent --> Search
+    Search --> HF
+    Search --> Mongo
+    Agent --> LLM
+    Agent --> Mongo
+```
+
+## Technology
+
+| Area | Technologies |
+| --- | --- |
+| Web client | React 19, Vite, React Router, Redux Toolkit, Tailwind CSS, Material UI |
+| API | Node.js, Express 5, Joi validation, cookie-based JWT authentication |
+| Data | MongoDB and Mongoose |
+| Repository analysis | simple-git, language-aware dependency and import parsers |
+| Embeddings | Transformers.js, `onnx-community/all-MiniLM-L6-v2-ONNX` (384 dimensions) |
+| Chat generation | Groq API through the OpenAI SDK, `openai/gpt-oss-120b` |
+| Automation | GitHub Actions, Jest, ESLint, Vite production build |
+
+## Repository layout
 
 ```text
-client (React + Vite)
-  -> repository submission UI
-  -> chat-ready flow (chat request wiring pending in UI)
-
-server (Express + MongoDB)
-  -> ingestion pipeline (clone + parse + persist)
-  -> vectorization pipeline (chunk + embed + store)
-  -> retrieval agent (similarity search + grounded generation)
-
-external models/services
-  -> Embeddings: Hugging Face Inference API
-  -> Chat generation: Groq OpenAI-compatible endpoint via OpenAI SDK
+client/
+  src/components/       Shared interface and access components
+  src/pages/            Authentication, exploration, and admin views
+  src/redux/             Client authentication state
+  src/services/          API clients
+server/
+  src/controllers/       HTTP request handlers
+  src/routes/            API route definitions
+  src/models/            Mongoose data models
+  src/services/
+    agents/               Repository Q&A and chat sessions
+    analysis/             Architecture and execution-path analysis
+    embeddings/           Source chunking and embedding generation
+    evaluation/           Answer scoring and golden dataset evaluation
+    parser/               Repository and language parsers
+    repository/           Repository ingestion orchestration
+    vector/               Cached hybrid retrieval and ranking
+  tests/                  Server unit tests
+.github/workflows/        Continuous integration
 ```
 
-## Tech Stack
+## Run locally
 
-### Frontend
+### Requirements
 
-- React 19 + Vite
-- React Router
-- Redux Toolkit
-- Axios
-- Tailwind CSS + MUI + React Toastify
+- Node.js 24 (CI uses Node.js 24)
+- MongoDB connection string
+- Groq API key for chat responses
+- Google OAuth web client ID if Google sign-in is enabled
 
-### Backend
+The embedding model is downloaded on first use and runs locally afterwards.
 
-- Node.js + Express 5
-- MongoDB + Mongoose
-- simple-git for cloning repositories
-- istextorbinary for file filtering
-- compute-cosine-similarity for vector retrieval
-
-### AI/LLM
-
-- Hugging Face model for embeddings: `sentence-transformers/all-MiniLM-L6-v2`
-- Groq-hosted LLM through OpenAI SDK-compatible API (`llama-3.3-70b-versatile`)
-
-## Core Features
-
-- Repository ingestion from GitHub URL.
-- Dependency extraction across multiple ecosystems (Node.js, Python, Go, Rust, Java).
-- Import graph extraction by language.
-- Entry-point detection (`app.listen`, `createRoot`, `main` signatures, etc.).
-- Embedding generation and vector storage for code chunks.
-- Semantic search over repository chunks.
-- Grounded AI Q&A with file-path sources.
-- Automatic architecture summary generation stored in analysis results.
-
-## Current Product Status
-
-Implemented and active:
-
-- `POST /api/repo` pipeline is functional end-to-end.
-- `POST /api/chat/ask` grounded Q&A endpoint is functional.
-- Frontend repository submission flow is integrated.
-
-In codebase but not yet mounted/connected in the main app:
-
-- Analyze/Evaluation/Observability route/controller surface.
-- Frontend chat request after repository submission (currently shows "next step" toast).
-
-## API Surface (Currently Mounted)
-
-Base URL: `http://localhost:3000`
-
-### Repository APIs
-
-- `GET /api/repo` - List repositories
-- `GET /api/repo/:id` - Get repository by ID
-- `POST /api/repo` - Submit repository URL and trigger ingestion
-- `PUT /api/repo/:id` - Update repository metadata
-- `DELETE /api/repo/:id` - Delete repository
-
-Example request:
-
-```json
-{
-  "url": "https://github.com/vercel/next.js",
-  "name": "nextjs"
-}
-```
-
-### Chat API
-
-- `POST /api/chat/ask` - Ask grounded questions about analyzed repository
-
-Example request:
-
-```json
-{
-  "repositoryId": "<mongo_object_id>",
-  "question": "Where is the main Express entry point and how does routing flow?"
-}
-```
-
-Example response shape:
-
-```json
-{
-  "success": true,
-  "data": {
-    "answer": "...",
-    "sources": [
-      "<absolute_file_path_1>",
-      "<absolute_file_path_2>"
-    ]
-  }
-}
-```
-
-## Data Model Snapshot
-
-Key Mongo collections:
-
-- `Repository`: metadata, ownership, local clone path, status, entry points.
-- `Dependency`: ecosystem + package inventory (prod/dev).
-- `File`: parsed file metadata (path, extension, imports, summaries).
-- `EmbeddingChunk`: chunk text + vector + metadata for retrieval.
-- `AnalysisResult`: architecture/onboarding summaries and model usage stats.
-- `Evaluation`: benchmark-style QA scoring records.
-- `Observability`: tokens, latency, status, and endpoint-level telemetry.
-
-## Project Structure (Developer View)
-
-```text
-REPO-INSIGHT-AI/
-|-- client/
-|   |-- src/
-|   |   |-- components/        # Shared UI blocks (Navbar, Sidebar, Hero)
-|   |   |-- pages/             # Route screens (Welcome, Explore, Auth, etc.)
-|   |   |-- services/          # API wrappers (repo submit, auth, job stubs)
-|   |   `-- redux/             # Global state (auth slice, store)
-|   `-- package.json
-|-- server/
-|   |-- src/
-|   |   |-- app.js             # Express middleware + mounted routes
-|   |   |-- server.js          # HTTP bootstrap + DB connection
-|   |   |-- config/            # Environment and Mongo config
-|   |   |-- controllers/       # Request handlers
-|   |   |-- routes/            # API route definitions
-|   |   |-- models/            # Mongoose schemas
-|   |   |-- services/
-|   |   |   |-- repository/    # Main ingestion orchestration
-|   |   |   |-- parser/        # Dependencies/imports/entry-point analyzers
-|   |   |   |-- embeddings/    # Chunking + embedding generation
-|   |   |   |-- vector/        # Similarity retrieval logic
-|   |   |   |-- agents/        # Grounded repository Q&A agent
-|   |   |   |-- llm/           # LLM and embedding provider adapters
-|   |   |   |-- github/        # Repo clone/fetch helpers
-|   |   |   |-- observability/ # Logging/metrics/token tracking scaffolding
-|   |   |   `-- evaluation/    # Quality/evaluation scaffolding
-|   |   |-- middleware/        # Request logging and global error handling
-|   |   `-- utils/             # Shared helpers + response wrappers
-|   `-- temp/repositories/     # Runtime clone workspace (generated at ingestion)
-|-- .github/                   # CI/CD/workflow metadata
-`-- README.md
-```
-
-## Local Setup
-
-### Prerequisites
-
-- Node.js 18+
-- MongoDB running locally or remote URI
-- API keys for embedding + generation providers
-
-### 1) Clone and install
+### Install dependencies
 
 ```bash
-git clone <your-repo-url>
-cd REPO-INSIGHT-AI
-
 cd server
-npm install
+npm ci
 
 cd ../client
-npm install
+npm ci
 ```
 
-### 2) Configure environment
+### Configure the server
 
 Create `server/.env`:
 
 ```env
-PORT=3000
+PORT=8080
 NODE_ENV=development
 MONGO_URL=mongodb://127.0.0.1:27017/repo-insight
 MONGO_DB_NAME=repo-insight
 FRONTEND_URL=http://localhost:5173
-
-# LLM (used by OpenAI SDK client configured for Groq endpoint)
+JWT_SECRET=replace_with_a_long_random_secret
 LLM_API_KEY=your_groq_api_key
+GOOGLE_CLIENT_ID=your_google_oauth_web_client_id
 
-# Embeddings
-HUGGINGFACE_API_KEY=your_huggingface_api_key
-
-# Optional/legacy key in codebase
-OPENAI_API_KEY=optional
+# Optional: bootstrap an admin account at server startup
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=use_a_unique_password_of_at_least_8_characters
+ADMIN_NAME=Repo Insight Admin
 ```
 
-### 3) Run servers
+Create `client/.env`:
 
-Terminal 1:
+```env
+VITE_SERVER_URL=http://localhost:8080
+VITE_GOOGLE_CLIENT_ID=your_google_oauth_web_client_id
+```
+
+Use a Google OAuth client configured for `http://localhost:5173` as an authorized JavaScript origin. Keep real secrets in local environment files or deployment secret storage; do not commit them.
+
+### Start the application
+
+In one terminal:
 
 ```bash
 cd server
 npm run dev
 ```
 
-Terminal 2:
+In a second terminal:
 
 ```bash
 cd client
 npm run dev
 ```
 
-Frontend: `http://localhost:5173`  
-Backend: `http://localhost:3000`
+Open [http://localhost:5173](http://localhost:5173). The API runs at [http://localhost:8080](http://localhost:8080).
 
-## How Developers Should Navigate This Codebase
+## API overview
 
-- Start with backend request flow: `app.js` -> `routes` -> `controllers` -> `services`.
-- For ingestion logic, focus first on `services/repository/repository.service.js`.
-- For parser support, inspect `services/parser/*` and ecosystem-specific parsers.
-- For Q&A quality, inspect `services/agents/repoAgent.js`, `services/vector/similaritySearch.js`, and `services/llm/providers/*`.
-- For schema evolution, update `models/*` before altering service write/read logic.
-- For frontend integration, start from `pages/ExplorePage.jsx` and `services/repoService.jsx`.
+Protected routes require an authenticated session. Repository and chat routes also require current terms acceptance. Evaluation and observability routes are admin-only.
 
-## Known Gaps / Improvement Opportunities
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `POST` | `/api/auth/signup` | Create a standard user account |
+| `POST` | `/api/auth/login` | Sign in with email and password |
+| `POST` | `/api/auth/google` | Sign in with Google |
+| `GET` | `/api/auth/me` | Read the current session |
+| `POST` | `/api/auth/accept-terms` | Record terms acceptance |
+| `POST` | `/api/auth/logout` | End the current session |
+| `GET` | `/api/repo` | List the signed-in user’s repositories |
+| `POST` | `/api/repo` | Analyze a GitHub repository URL |
+| `GET` | `/api/repo/:id` | Read an owned repository and its analysis |
+| `DELETE` | `/api/repo/:id` | Delete an owned repository and its data |
+| `POST` | `/api/chat/ask` | Ask a question; supports streamed chat responses |
+| `GET` | `/api/chat/sessions` | List the signed-in user’s chat sessions |
+| `GET` | `/api/health` | Read service health |
+| `GET` | `/api/health/ready` | Check service readiness |
+| `GET` | `/api/health/ping` | Lightweight uptime-monitor endpoint |
+| `GET` / `POST` | `/api/evaluation/...` | Admin repository evaluation tools |
+| `GET` | `/api/observability/...` | Admin operational metrics |
 
-- Mount and implement currently empty analyze/evaluation/observability controllers and routes.
-- Wire frontend chat submit to `POST /api/chat/ask` after repo ingestion.
-- Add pagination/filter support for repository list APIs.
-- Add background job queue for large repository ingestion.
-- Add stronger cleanup lifecycle for cloned repositories.
-- Expand test coverage beyond `server/tests/sample.test.js`.
+## Quality checks and CI
 
-## Testing
-
-Current test script exists on server:
+Run the checks locally:
 
 ```bash
 cd server
 npm test
+
+cd ../client
+npm run lint
+npm run build
 ```
 
-The repository currently has minimal test coverage; prioritize unit tests for parser modules and integration tests for `/api/repo` and `/api/chat/ask`.
+GitHub Actions runs the server unit tests and the client lint and production build on pushes, pull requests, and manual dispatches.
 
-## Why This Project Matters
+## Team
 
-Repo Insight AI turns unstructured repository content into actionable, grounded developer intelligence. Instead of reading hundreds of files manually, teams can:
-
-- Discover architecture and critical modules faster.
-- Reduce onboarding time.
-- Ask repository-aware questions with source-backed answers.
-- Build a foundation for automated quality and observability workflows.
-
----
-
-If you want, the next step can be adding a second diagram for sequence-level API flow and a contributor guide (`CONTRIBUTING.md`) aligned with this architecture.
+**Team Aeternis** built Repo Insight AI to make large codebases easier to understand, navigate, and discuss. The project brings repository parsing, retrieval, and conversational AI together in one developer-focused workspace.

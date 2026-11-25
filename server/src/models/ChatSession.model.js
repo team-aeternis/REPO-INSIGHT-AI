@@ -9,13 +9,34 @@ const messageSchema = new mongoose.Schema({
     enum: ["user", "assistant"]
   },
 
-  content: String
+  content: String,
+
+  sources: [String],
+
+  navigationHelp: {
+    type: [mongoose.Schema.Types.Mixed],
+    default: [],
+  },
 
 }, {
   timestamps: true
 });
 
 const chatSessionSchema = new mongoose.Schema({
+
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    required: true,
+    index: true
+  },
+
+  title: {
+    type: String,
+    trim: true,
+    maxlength: 120,
+    default: "New chat"
+  },
 
   repositoryId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -28,6 +49,8 @@ const chatSessionSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
+chatSessionSchema.index({ userId: 1, updatedAt: -1 });
 
 export default mongoose.model(
   "ChatSession",

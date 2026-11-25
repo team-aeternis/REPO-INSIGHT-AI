@@ -25,6 +25,29 @@ const normalizeRepoPath = (repository, filePath = "") => {
 const normalizePathList = (repository, paths = []) =>
   [...new Set((paths || []).map((p) => normalizeRepoPath(repository, p)).filter(Boolean))];
 
+const getDependencyManifestPaths = (repository, files = []) =>
+  normalizePathList(
+    repository,
+    files
+      .map((file) => file.filePath)
+      .filter((filePath) =>
+        /(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements[^/]*\.txt|pyproject\.toml|poetry\.lock|go\.mod|cargo\.toml|pom\.xml|build\.gradle(?:\.kts)?)$/i.test(filePath || ""),
+      ),
+  ).slice(0, 8);
+
+const findMentionedRepositoryPaths = (answer, repository, files = []) => {
+  const lowerAnswer = String(answer || "").toLowerCase();
+  return normalizePathList(
+    repository,
+    files
+      .map((file) => file.filePath)
+      .filter((filePath) => {
+        const normalized = normalizeRepoPath(repository, filePath).toLowerCase();
+        return normalized && lowerAnswer.includes(normalized);
+      }),
+  ).slice(0, 12);
+};
+
 const normalizeNavigation = (repository, items = []) =>
   (items || [])
     .map((item) => ({
@@ -106,7 +129,7 @@ const isRepositoryRelevant = ({
   );
 
   // Accept if we have either lexical overlap with repo index or strong semantic retrieval.
-  return genericRepoIntent || overlap >= 1 || bestScore >= 0.22;
+  return genericRepoIntent || overlap >= 1 || bestScore >= 0.36;
 };
 
 const isClearlyNonRepositoryQuestion = (question = "") => {
@@ -259,7 +282,7 @@ const formatArchitecture = (analysis, repository, modules) => {
   return `${summary}\n\n**Key entry points:** ${entryLine}\n\n**Detected modules:** ${moduleLine}`;
 };
 
-const formatDependencies = (dependencies = [], usageByPackage = {}) => {
+const formatDependencies = (dependencies = [], usageByPackage = {}, manifestFiles = []) => {
   if (!dependencies.length) return "I could not find dependency records for this repository.";
 
   const sorted = [...dependencies].sort((a, b) =>
@@ -282,7 +305,11 @@ const formatDependencies = (dependencies = [], usageByPackage = {}) => {
       ? `\n\nShowing first 40 of ${sorted.length}. Ask "show all dependencies" for full list.`
       : "";
 
-  return `I found **${sorted.length}** dependencies.\n\n${lines}${extra}`;
+  const sources = manifestFiles.length
+    ? `\n\n**Dependency manifests:** ${manifestFiles.map((file) => `\`${file}\``).join(", ")}`
+    : "\n\nNo dependency manifest path was indexed.";
+
+  return `I found **${sorted.length}** dependencies.\n\n${lines}${extra}${sources}`;
 };
 
 const formatFiles = (repository, files = []) => {
@@ -313,7 +340,7 @@ const formatFiles = (repository, files = []) => {
   return `I found **${normalized.length}** indexed files.\n\nTop categories:\n${categories}\n\nSample files:\n${sample}`;
 };
 
-const formatTechStack = (repository, dependencies) => {
+const formatTechStack = (repository, dependencies, manifestFiles = []) => {
   const inferred = detectTechStackFromDeps(dependencies);
   const persisted = repository?.techStack || {};
 
@@ -330,6 +357,9 @@ const formatTechStack = (repository, dependencies) => {
     `- **Backend:** ${merged.backend.length ? merged.backend.join(", ") : "Not clearly detected"}`,
     `- **Database:** ${merged.database.length ? merged.database.join(", ") : "Not clearly detected"}`,
     `- **Styling:** ${merged.styling.length ? merged.styling.join(", ") : "Not clearly detected"}`,
+    manifestFiles.length
+      ? `- **Sources:** ${manifestFiles.map((file) => `\`${file}\``).join(", ")}`
+      : "- **Sources:** No dependency manifest path was indexed.",
   ].join("\n");
 };
 
@@ -349,7 +379,7 @@ const formatEntryPoints = (repository) => {
   return `Detected entry points:\n\n${lines}`;
 };
 
-const formatModules = (modules = {}) => {
+const formatModules = (modules = {}, repository) => {
   const names = Object.keys(modules || {});
   if (!names.length) return "No modules extracted yet.";
 
@@ -357,7 +387,12 @@ const formatModules = (modules = {}) => {
     .slice(0, 12)
     .map((name) => {
       const files = Array.isArray(modules[name]) ? modules[name] : [];
-      return `- **${name}:** ${files.length} file(s)`;
+      const paths = normalizePathList(
+        repository,
+        files.map((file) => (typeof file === "string" ? file : file?.filePath || file?.fileName)),
+      ).slice(0, 5);
+      const pathText = paths.length ? ` — ${paths.map((file) => `\`${file}\``).join(", ")}` : "";
+      return `- **${name}:** ${files.length} file(s)${pathText}`;
     })
     .join("\n");
 
@@ -365,22 +400,21 @@ const formatModules = (modules = {}) => {
 };
 
 const formatOnboarding = (analysis, repository) => {
-  if (analysis?.onboardingGuide?.trim()) return analysis.onboardingGuide;
-
   const entryPoints = (repository?.entryPoints || [])
     .slice(0, 5)
     .map((e) => `\`${e?.file || e}\``)
     .filter(Boolean);
+  const modules = Object.keys(analysis?.modules || {}).slice(0, 8);
+  const guide = analysis?.onboardingGuide?.trim();
 
   return [
-    "Start from the entry points, then follow service and middleware flow.",
-    `- Entry points: ${entryPoints.length ? entryPoints.join(", ") : "Not detected"}`,
-    "- Read `server/src/routes/*` then matching controllers/services.",
-    "- Use dependency and module views to map responsibilities.",
-  ].join("\n");
+    guide || "Start at a detected entry point and follow its imports into the modules it calls.",
+    `**Entry points:** ${entryPoints.length ? entryPoints.join(", ") : "None were identified in the indexed repository."}`,
+    modules.length ? `**Detected modules:** ${modules.join(", ")}` : "Review the repository file list to identify its main modules.",
+  ].join("\n\n");
 };
 
-export const repoAgent = async (repositoryId, question, chatHistory = []) => {
+export const repoAgent = async (repositoryId, question, chatHistory = [], { onToken } = {}) => {
   try {
     const [repository, analysis, dependencies, files] = await Promise.all([
       RepositoryModel.findById(repositoryId).lean(),
@@ -400,6 +434,7 @@ export const repoAgent = async (repositoryId, question, chatHistory = []) => {
     const modules = analysis?.modules && Object.keys(analysis.modules).length
       ? analysis.modules
       : await extractModules(repositoryId);
+    const dependencyManifestPaths = getDependencyManifestPaths(repository, files);
 
     const intent = classifyIntent(question);
     let answer = "";
@@ -410,7 +445,8 @@ export const repoAgent = async (repositoryId, question, chatHistory = []) => {
       answer = formatArchitecture(analysis, repository, modules);
       sources = normalizePathList(repository, [
         ...(repository.entryPoints || []).map((e) => (typeof e === "string" ? e : e?.file)),
-      ]).slice(0, 8);
+        ...findMentionedRepositoryPaths(answer, repository, files),
+      ]).slice(0, 12);
       navigationHelp = normalizeNavigation(
         repository,
         sources.map((file) => ({ title: "Entry point", file })),
@@ -440,8 +476,8 @@ export const repoAgent = async (repositoryId, question, chatHistory = []) => {
           .filter(Boolean);
       }
 
-      answer = formatDependencies(dependencies, usageByPackage);
-      sources = ["server/package.json", "client/package.json"];
+      answer = formatDependencies(dependencies, usageByPackage, dependencyManifestPaths);
+      sources = dependencyManifestPaths;
       navigationHelp = normalizeNavigation(
         repository,
         sources.map((file) => ({ title: "Dependency file", file })),
@@ -468,8 +504,8 @@ export const repoAgent = async (repositoryId, question, chatHistory = []) => {
     }
 
     if (intent === "tech_stack") {
-      answer = formatTechStack(repository, dependencies);
-      sources = ["server/package.json", "client/package.json"];
+      answer = formatTechStack(repository, dependencies, dependencyManifestPaths);
+      sources = dependencyManifestPaths;
       navigationHelp = normalizeNavigation(
         repository,
         sources.map((file) => ({ title: "Dependency file", file })),
@@ -490,13 +526,17 @@ export const repoAgent = async (repositoryId, question, chatHistory = []) => {
     }
 
     if (intent === "modules") {
-      answer = formatModules(modules);
+      answer = formatModules(modules, repository);
       const moduleFiles = Object.values(modules || {})
         .flat()
         .map((f) => (typeof f === "string" ? f : f?.filePath))
         .filter(Boolean)
         .slice(0, 15);
       sources = normalizePathList(repository, moduleFiles);
+      sources = normalizePathList(repository, [
+        ...sources,
+        ...findMentionedRepositoryPaths(answer, repository, files),
+      ]).slice(0, 20);
       navigationHelp = normalizeNavigation(
         repository,
         moduleFiles.slice(0, 8).map((file) => ({ title: "Module file", file })),
@@ -506,10 +546,13 @@ export const repoAgent = async (repositoryId, question, chatHistory = []) => {
 
     if (intent === "onboarding") {
       answer = formatOnboarding(analysis, repository);
-      sources = normalizePathList(repository, (repository.entryPoints || [])
-        .map((e) => (typeof e === "string" ? e : e?.file))
-        .filter(Boolean)
-        .slice(0, 8));
+      sources = findMentionedRepositoryPaths(answer, repository, files);
+      if (!sources.length) {
+        sources = normalizePathList(repository, (repository.entryPoints || [])
+          .map((e) => (typeof e === "string" ? e : e?.file))
+          .filter(Boolean)
+          .slice(0, 8));
+      }
       navigationHelp = normalizeNavigation(
         repository,
         sources.map((file) => ({ title: "Start here", file })),
@@ -518,10 +561,22 @@ export const repoAgent = async (repositoryId, question, chatHistory = []) => {
     }
 
     if (intent === "critical_path") {
-      answer =
-        analysis?.criticalPathAnalysis?.trim() ||
-        "Critical path analysis is not available yet for this repository.";
-      return { answer, sources: [], navigationHelp: [] };
+      answer = analysis?.criticalPathAnalysis?.trim();
+      if (!answer) {
+        const flowFiles = files
+          .filter((file) => ["route", "controller", "middleware", "service", "model"].includes(file.category))
+          .slice(0, 12)
+          .map((file) => `- \`${normalizeRepoPath(repository, file.filePath)}\` (${file.category})`);
+        answer = flowFiles.length
+          ? `A generated execution trace is not available yet. The indexed repository contains these files that commonly form an application request path:\n\n${flowFiles.join("\n")}\n\nFollow the imports between these files to confirm the actual flow.`
+          : "There is not enough indexed route, service, or entry-point evidence to map a critical path yet.";
+      }
+      sources = findMentionedRepositoryPaths(answer, repository, files);
+      navigationHelp = normalizeNavigation(
+        repository,
+        sources.slice(0, 5).map((file) => ({ title: "Critical path file", file })),
+      );
+      return { answer, sources, navigationHelp };
     }
 
     // General questions: structured context first, semantic chunks second.
@@ -560,37 +615,26 @@ Dependencies sample: ${(dependencies || []).slice(0, 20).map((d) => `${d.package
 
     const chunkContext = relevantChunks
       .slice(0, 6)
-      .map((item) => `FILE: ${normalizeRepoPath(repository, item.filePath)}\nCODE: ${item.content}`)
+      .map((item) => `FILE: ${normalizeRepoPath(repository, item.filePath)}\nCODE: ${String(item.content || "").slice(0, 1800)}`)
       .join("\n\n");
 
-    const prompt = `
-You are a repository intelligence assistant.
-Answer the user using the repository context below. Be precise and grounded.
-If evidence is insufficient, say: "I could not find enough repository evidence."
-
-Rules:
-- Start with a direct answer.
-- Use short bullets only if needed.
-- Mention concrete file paths when available.
-- Keep response under 220 words.
-
-Recent chat context (oldest to latest):
-${(chatHistory || [])
-  .slice(-8)
-  .map((msg) => `${msg.role}: ${msg.content}`)
-  .join("\n") || "No previous messages."}
-
-Structured repository context:
-${structuredContext}
-
-Semantic snippets:
-${chunkContext || "No semantic snippets available. Use structured repository context first."}
-
-User question:
-${question}
-`;
-
-    answer = await generateResponse(prompt);
+    const conversation = (chatHistory || [])
+      .slice(-8)
+      .map((msg) => ({
+        role: msg.role === "assistant" ? "assistant" : "user",
+        content: String(msg.content || "").slice(0, 1800),
+      }));
+    answer = await generateResponse([
+      {
+        role: "system",
+        content: "You are Repo Insight, a repository intelligence assistant. Answer the latest user question directly using only the supplied repository evidence. Cite exact file paths in backticks. Separate confirmed facts from inference, and say when the indexed evidence is insufficient. Be conversational and concise, usually under 220 words. Never invent files, dependencies, or behavior.",
+      },
+      ...conversation,
+      {
+        role: "user",
+        content: `Repository context:\n${structuredContext}\n\nRetrieved code snippets:\n${chunkContext || "No code snippets were retrieved; use only the structured repository context."}\n\nQuestion: ${question}`,
+      },
+    ], { onToken });
 
     navigationHelp = normalizeNavigation(
       repository,

@@ -1,27 +1,44 @@
 import { createAsyncThunk } from "@reduxjs/toolkit";
-import { login, signup } from "../../services/authService";
+import {
+  getCurrentUser,
+  googleLogin,
+  login,
+  logOut,
+  signup,
+} from "../../services/authService";
+
+const getMessage = (error, fallback) =>
+  error?.response?.data?.message || error?.message || fallback;
 
 export const registerUser = createAsyncThunk(
   "auth/registerUser",
   async (userData, { rejectWithValue }) => {
     try {
-      const response = await signup(userData);
-      return response;
+      return await signup(userData);
     } catch (error) {
-      return rejectWithValue(error.response.data);
+      return rejectWithValue(getMessage(error, "Account creation failed."));
     }
   },
 );
 
 export const loginUser = createAsyncThunk(
   "auth/loginUser",
-  async (loginData, { rejectWithValue }) => {
+  async (credentials, { rejectWithValue }) => {
     try {
-      const response = await login(loginData);
-      
-      return response;
+      return await login(credentials);
     } catch (error) {
-      return rejectWithValue(error.response.data);
+      return rejectWithValue(getMessage(error, "Sign in failed."));
+    }
+  },
+);
+
+export const googleLoginUser = createAsyncThunk(
+  "auth/googleLoginUser",
+  async (credential, { rejectWithValue }) => {
+    try {
+      return await googleLogin(credential);
+    } catch (error) {
+      return rejectWithValue(getMessage(error, "Google sign in failed."));
     }
   },
 );
@@ -30,10 +47,9 @@ export const fetchUser = createAsyncThunk(
   "auth/fetchUser",
   async (_, { rejectWithValue }) => {
     try {
-      const response = await getProfile();
-      return response;
+      return await getCurrentUser();
     } catch (error) {
-      return rejectWithValue(error?.message || "Failed to fetch user");
+      return rejectWithValue(getMessage(error, "No active session."));
     }
   },
 );
@@ -42,12 +58,9 @@ export const logOutUser = createAsyncThunk(
   "auth/logOutUser",
   async (_, { rejectWithValue }) => {
     try {
-      await logOut();
-      return true;
+      return await logOut();
     } catch (error) {
-      return rejectWithValue(
-        error?.response?.data?.message || error?.message || "Failed to logout",
-      );
+      return rejectWithValue(getMessage(error, "Sign out failed."));
     }
   },
 );
