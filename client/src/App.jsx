@@ -55,7 +55,7 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<RequireAuth><HomePage /></RequireAuth>}>
-            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route index element={<Navigate to="/auth/login" replace />} />
             <Route path="dashboard" element={<WelcomePage username={user?.name} />} />
             <Route
               path="welcome"
