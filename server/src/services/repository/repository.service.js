@@ -15,7 +15,6 @@ import { detectTechStack } from "../parser/detectTechStack.js";
 import { detectEntryPoints } from "../parser/detectEntryPoints.js";
 import { extractImports } from "../parser/extractImports.js";
 import { summarizeRepo } from "../parser/summarizeRepo.js";
-import { criticalPathAnalysis } from "../analysis/criticalPathAnalysis.js";
 
 import { cloneRepo } from "../github/cloneRepo.js";
 import { walkFiles } from "../parser/fileWalker.js";
@@ -243,6 +242,7 @@ export const createRepository = async (repositoryData, userId) => {
       repositoryDoc._id,
 
       fileDocuments,
+      detectedEntryPoints,
     );
 
     if (embeddingDocuments.length > 0) {
@@ -254,28 +254,19 @@ export const createRepository = async (repositoryData, userId) => {
       "project architecture",
       "authentication flow",
       "database connection",
-      "authentication flow jwt login middleware",
-      "api routing request handling controllers",
-      "database connection mongoose sequelize queries",
-      "frontend routing react pages components",
-      "analysis pipeline processing services",
     ];
     const [module, retrievedChunks] = await Promise.all([
       extractModules(repositoryDoc._id),
-      similaritySearchMany(repositoryDoc._id, analysisQueries),
+      similaritySearchMany(repositoryDoc._id, analysisQueries, 2),
     ]);
-    const [summary, criticalPath] = await Promise.all([
-      summarizeRepo(repositoryDoc._id, retrievedChunks.slice(0, 3), module),
-      criticalPathAnalysis(repositoryDoc._id, retrievedChunks.slice(3), {
-        persist: false,
-      }),
-    ]);
+    const summary = await summarizeRepo(repositoryDoc._id, retrievedChunks, module);
 
     const analyzeResult = await AnalyzeResultModel.findOneAndUpdate(
       { repositoryId: repositoryDoc._id },
       {
-        architectureSummary: summary,
-        criticalPathAnalysis: criticalPath,
+        architectureSummary: summary.architectureSummary,
+        criticalPathAnalysis: summary.criticalPathAnalysis,
+        onboardingGuide: summary.onboardingGuide,
         modules: module,
       },
       { upsert: true, returnDocument: "after", setDefaultsOnInsert: true },

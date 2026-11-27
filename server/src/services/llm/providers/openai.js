@@ -12,7 +12,7 @@ const client = new OpenAI({
   baseURL: "https://api.groq.com/openai/v1"
 });
 
-export const generateResponse = async (prompt, { onToken } = {}) => {
+export const generateResponse = async (prompt, { onToken, maxCompletionTokens = 700 } = {}) => {
    const startedAt = startTimer();
    const messages = Array.isArray(prompt) ? prompt : [{ role: "user", content: prompt }];
    const input = messages.map((message) => `${message.role}: ${message.content}`).join("\n");
@@ -23,7 +23,7 @@ export const generateResponse = async (prompt, { onToken } = {}) => {
           const stream = await client.chat.completions.create({
             model: MODEL_ID,
             reasoning_effort: "low",
-            max_completion_tokens: 700,
+            max_completion_tokens: maxCompletionTokens,
             messages,
             stream: true,
           });
@@ -38,7 +38,7 @@ export const generateResponse = async (prompt, { onToken } = {}) => {
           const response = await client.chat.completions.create({
             model: MODEL_ID,
             reasoning_effort: "low",
-            max_completion_tokens: 700,
+            max_completion_tokens: maxCompletionTokens,
             messages,
           });
           output = response.choices?.[0]?.message?.content || "";
@@ -60,6 +60,25 @@ export const generateResponse = async (prompt, { onToken } = {}) => {
 
    } catch (error) {
         const tokens = trackTokenUsage({ input, output: "" });
+        const providerStatus = Number(error?.status || error?.statusCode);
+        const isTokenLimit = error?.type === "tokens" ||
+          error?.error?.type === "tokens" ||
+          /tokens per minute|request too large for model/i.test(error?.message || "");
+        const retryAfter = Number(error?.headers?.get?.("retry-after"));
+        const waitMessage = Number.isFinite(retryAfter) && retryAfter > 0
+          ? ` Wait about ${Math.ceil(retryAfter)} seconds before retrying.`
+          : " Please retry shortly.";
+        const statusCode = isTokenLimit || providerStatus === 429
+          ? 429
+          : providerStatus === 413
+            ? 413
+            : 502;
+        const message = isTokenLimit
+          ? `The AI provider's token budget is temporarily exhausted.${waitMessage}`
+          : providerStatus === 429
+            ? `The AI provider is temporarily rate limited.${waitMessage}`
+            : "The AI provider could not generate a response. Please try again.";
+
         void logObservability({
           endpoint: "LLM generateResponse",
           modelUsed: MODEL_ID,
@@ -67,10 +86,16 @@ export const generateResponse = async (prompt, { onToken } = {}) => {
           outputTokens: 0,
           responseTime: getDurationMs(startedAt),
           status: "failed",
-          errorMessage: error?.message || "LLM call failed",
+          errorMessage: message,
         });
-        console.error("Error generating response from OpenAI API:", error);
-        throw new Error("Failed to generate response from OpenAI API");
+        console.error("LLM provider request failed:", {
+          status: providerStatus || null,
+          code: error?.code || null,
+          type: error?.type || error?.error?.type || null,
+        });
+        const mappedError = new Error(message);
+        mappedError.statusCode = statusCode;
+        throw mappedError;
    }
 
 }

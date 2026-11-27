@@ -2,6 +2,7 @@ import { chunkText } from "../src/services/embeddings/chunkText.js";
 import { scoreResponse } from "../src/services/evaluation/scoreResponse.js";
 import { compareGrounding } from "../src/services/evaluation/compareGrounding.js";
 import { rankChunks, tokenize } from "../src/services/vector/retrievalScoring.js";
+import { parseAnalysisSections } from "../src/services/parser/parseAnalysisSections.js";
 
 describe("repository text chunking", () => {
   test("keeps the configured overlap between adjacent chunks", () => {
@@ -73,5 +74,17 @@ describe("answer quality and source grounding", () => {
 
     expect(result.groundedFiles).toEqual(["src/chat.js"]);
     expect(result.groundingScore).toBe(50);
+  });
+});
+
+describe("repository analysis sections", () => {
+  test("separates architecture, critical paths, and onboarding from one model response", () => {
+    const result = parseAnalysisSections(
+      "## Architecture\nA React client and Express server.\n\n## Critical Execution Paths\nRoutes call services and MongoDB models.\n\n## Developer Onboarding\nStart at `server/src/server.js`.",
+    );
+
+    expect(result.architectureSummary).toBe("A React client and Express server.");
+    expect(result.criticalPathAnalysis).toBe("Routes call services and MongoDB models.");
+    expect(result.onboardingGuide).toBe("Start at `server/src/server.js`.");
   });
 });

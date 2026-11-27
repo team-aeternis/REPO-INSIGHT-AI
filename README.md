@@ -181,7 +181,7 @@ VITE_SERVER_URL=http://localhost:8080
 VITE_GOOGLE_CLIENT_ID=your_google_oauth_web_client_id
 ```
 
-Use a Google OAuth client configured for `http://localhost:5173` as an authorized JavaScript origin. Keep real secrets in local environment files or deployment secret storage; do not commit them.
+In Google Cloud Console, configure the same OAuth **Web application** client ID in both environment variables. Add each frontend host as an **Authorized JavaScript origin**: `http://localhost:5173` for local development and `https://repo-insight-ep6s0bavv-abhishek-jevenes-projects.vercel.app` for the production deployment shown in the project setup. Origins contain only the scheme and host; do not add `/auth/login`, `/api/auth/google`, or any other path. This app uses Google Identity Services to return a credential to the page, so it does not need an **Authorized redirect URI** for Google sign-in. If the Vercel hostname changes, add the new exact production origin. Keep real secrets in local environment files or deployment secret storage; do not commit them.
 
 ### Start the application
 

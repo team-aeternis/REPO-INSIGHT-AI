@@ -1,23 +1,20 @@
 import AnalyzeResultModel from "../models/AnalyzeResult.model.js";
 import { summarizeRepo } from "../services/parser/summarizeRepo.js";
-import { criticalPathAnalysis } from "../services/analysis/criticalPathAnalysis.js";
 import { extractModules } from "../services/parser/extractModules.js";
 
 export const rerunRepositoryAnalysis = async (req, res, next) => {
   try {
     const { repositoryId } = req.params;
 
-    const [summary, criticalPath, modules] = await Promise.all([
-      summarizeRepo(repositoryId),
-      criticalPathAnalysis(repositoryId),
-      extractModules(repositoryId),
-    ]);
+    const modules = await extractModules(repositoryId);
+    const summary = await summarizeRepo(repositoryId, null, modules);
 
     const analysis = await AnalyzeResultModel.findOneAndUpdate(
       { repositoryId },
       {
-        architectureSummary: summary,
-        criticalPathAnalysis: criticalPath,
+        architectureSummary: summary.architectureSummary,
+        criticalPathAnalysis: summary.criticalPathAnalysis,
+        onboardingGuide: summary.onboardingGuide,
         modules,
       },
       { upsert: true, new: true },
