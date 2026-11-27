@@ -14,9 +14,9 @@ export const chunkText = (text, chunkSize = 700, overlap = 100) => {
          if (lineBreak > start + Math.floor(chunkSize * 0.6)) end = lineBreak + 1;
       }
 
-      const chunk = source.slice(start, end).trim();
+      const chunk = source.slice(start, end);
       if (chunk) chunks.push(chunk);
-      if (end >= source.length) break;
+      if (chunk.length <= Math.max(0, overlap)) break;
 
       const nextStart = Math.max(start + 1, end - Math.max(0, overlap));
       const overlapLineBreak = source.indexOf("\n", nextStart);
