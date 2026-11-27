@@ -8,6 +8,7 @@ import { similaritySearchMany } from "../vector/similaritySearch.js";
 import { generateResponse } from "../llm/providers/openai.js";
 
 import { extractModules } from "./extractModules.js";
+import { parseAnalysisSections } from "./parseAnalysisSections.js";
 
 
 export const summarizeRepo = async (
@@ -24,83 +25,43 @@ export const summarizeRepo = async (
           "project architecture",
           "authentication flow",
           "database connection",
-        ]),
+        ], 2),
       ]);
-    const [architectureChunks, authChunks, databaseChunks] = semanticChunks;
+    const [architectureChunks = [], authChunks = [], databaseChunks = []] = semanticChunks;
 
-    const entryPoints =
-   repository.entryPoints || [];
+    if (!repository) throw new Error("Repository not found");
 
-    // build semantic context
+    const compactModules = Object.fromEntries(
+      Object.entries(modules || {}).slice(0, 8).map(([name, files]) => [
+        name,
+        (Array.isArray(files) ? files : []).slice(0, 6).map((file) =>
+          typeof file === "string" ? file : file?.filePath || file?.fileName || "",
+        ).filter(Boolean),
+      ]),
+    );
+    const entryPoints = (repository.entryPoints || [])
+      .slice(0, 12)
+      .map((entry) => typeof entry === "string" ? entry : entry?.file)
+      .filter(Boolean);
+    const formatChunks = (items) => items
+      .slice(0, 2)
+      .map((item) => String(item?.chunk?.chunkText || "").slice(0, 1000))
+      .filter(Boolean)
+      .join("\n\n---\n\n") || "No relevant code chunks were retrieved.";
 
-    const context = `
+    const context = `Repository: ${repository.repoName}\n` +
+      `Dependencies: ${dependencies.slice(0, 35).map((dep) => dep.packageName).filter(Boolean).join(", ")}\n` +
+      `Modules and sample files: ${JSON.stringify(compactModules)}\n` +
+      `Entry points: ${entryPoints.join(", ")}\n` +
+      `Architecture evidence:\n${formatChunks(architectureChunks)}\n\n` +
+      `Authentication evidence:\n${formatChunks(authChunks)}\n\n` +
+      `Database evidence:\n${formatChunks(databaseChunks)}`;
 
-Repository Name:
-${repository.repoName}
+    // Keep analysis prompts comfortably below the provider's shared TPM budget.
+    const prompt = `You are a repository intelligence assistant. Use only the evidence below; do not infer frameworks or flows without evidence. Cite exact paths where possible. Be concise and return these three Markdown sections with the exact headings shown:\n\n## Architecture\nDescribe the repository structure and main modules.\n\n## Critical Execution Paths\nSummarize evidenced authentication, API, and database flow. State when a flow is not visible in the retrieved evidence.\n\n## Developer Onboarding\nName a practical starting point and the next files to inspect.\n\nRepository evidence (bounded):\n${context.slice(0, 7000)}`;
 
-Dependencies:
-${dependencies.map((dep) => dep.packageName).filter(Boolean).join(", ")}
-
-Repository Modules:
-
-${JSON.stringify(modules, null, 2)}
-
-Architecture Chunks:
-${architectureChunks.map((item) => item.chunk.chunkText).join("\n\n")}
-
-Authentication Chunks:
-${authChunks.map((item) => item.chunk.chunkText).join("\n\n")}
-
-Database Chunks:
-${databaseChunks.map((item) => item.chunk.chunkText).join("\n\n")}
-
-Entry Points:
-
-${entryPoints.map((entry) => entry.file || entry).join("\n")}
-`;
-
-    // prompt
-
-    const prompt = `
-
-You are a repository intelligence assistant.
-
-Analyze this repository and generate:
-
-1. Architecture summary
-2. Tech stack summary
-3. Important modules
-4. Authentication flow
-5. Database flow
-6. Critical execution paths
-7. Recommended starting files
-8. Developer onboarding guidance
-
-Explain the major repository modules and their responsibilities.
-
-Rules:
-- Do NOT assume technologies not present in repository
-- Mention grounded file references when possible
-- Use concise markdown headings
-- Explain repository modules clearly
-- Mention important entry points
-- Include critical execution paths
-
-Repository Context:
-
-${context}
-
-Keep response:
-- concise
-- developer friendly
-- grounded in repository
-`;
-
-    // generate summary
-
-    const summary = await generateResponse(prompt);
-
-    return summary;
+    const generated = await generateResponse(prompt, { maxCompletionTokens: 500 });
+    return parseAnalysisSections(generated);
   } catch (error) {
     console.log(error);
 

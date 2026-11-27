@@ -10,12 +10,24 @@ const ignoredFolders = [
   "build",
   ".next",
   "coverage",
+  "vendor",
+  "target",
+  ".venv",
+  "venv",
+  "__pycache__",
+  ".cache",
+  ".turbo",
+  ".yarn",
+  ".idea",
+  ".vscode",
+  "bower_components",
+  "Pods",
 ];
 
 const ignoredFiles = [
 
-   ".nojekyll"
-
+  ".nojekyll",
+  ".DS_Store",
 ];
 
 const ignoredExtensions = [
@@ -31,18 +43,19 @@ const ignoredExtensions = [
   ".dll",
   ".pdf",
   ".css",
+  ".map",
+  ".lock",
 ];
 
 export const walkFiles = (dirPath, fileList = []) => {
-  const files = fs.readdirSync(dirPath);
+  const files = fs.readdirSync(dirPath, { withFileTypes: true });
 
-  for (const file of files) {
+  for (const entry of files) {
+    const file = entry.name;
     const fullPath = path.join(dirPath, file);
 
-    const stat = fs.statSync(fullPath);
-
     // HANDLE DIRECTORY FIRST
-    if (stat.isDirectory()) {
+    if (entry.isDirectory()) {
       // ignore folders
       if (ignoredFolders.includes(file)) {
         continue;
@@ -58,6 +71,11 @@ export const walkFiles = (dirPath, fileList = []) => {
       continue;
     }
 
+    // Do not follow symlinks or sockets in untrusted repository trees.
+    if (!entry.isFile()) continue;
+
+    const stat = fs.statSync(fullPath);
+
     // skip ignored extensions
     const ext = path.extname(file);
 
@@ -71,7 +89,7 @@ export const walkFiles = (dirPath, fileList = []) => {
     }
 
     // skip huge files
-    if (stat.size > 1024 * 1024) {
+    if (stat.size > 2 * 1024 * 1024) {
       continue;
     }
 
